@@ -1,6 +1,8 @@
 {
   "name": "radical-browser-desktop",
   "version": "0.1.0",
+  "description": "The browser built for builders.",
+  "author": "The Radical Party",
   "private": true,
   "main": "build/main/index.js",
   "scripts": {
@@ -48,11 +50,10 @@
       "buildResources": "assets"
     }
   },
-  "dependencies": {
-    "electron": "^35.0.0"
-  },
+  "dependencies": {},
   "devDependencies": {
     "@types/node": "^22.0.0",
+    "electron": "^35.0.0",
     "electron-builder": "^25.1.8",
     "esbuild": "^0.25.0",
     "typescript": "^5.8.0"

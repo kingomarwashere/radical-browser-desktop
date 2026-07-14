@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self' 'unsafe-inline'">
+  <title>Radical Browser</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:      #0d0d0d;
+      --bg2:     #161616;
+      --bg3:     #222;
+      --border:  #2a2a2a;
+      --text:    #e2e2e2;
+      --text2:   #666;
+      --accent:  #4f8ef7;
+      --tab-h:   40px;
+      --nav-h:   48px;
+    }
+
+    html, body {
+      height: 100%;
+      background: var(--bg);
+      color: var(--text);
+      font: 13px/1 -apple-system, BlinkMacSystemFont, 'SF Pro Text', system-ui, sans-serif;
+      overflow: hidden;
+      user-select: none;
+      -webkit-user-select: none;
+    }
+
+    /* ── chrome shell ─────────────────────────────────────── */
+    #chrome {
+      position: fixed;
+      inset: 0 0 auto 0;
+      height: calc(var(--tab-h) + var(--nav-h));
+      display: flex;
+      flex-direction: column;
+      background: var(--bg);
+      border-bottom: 1px solid var(--border);
+      z-index: 100;
+    }
+
+    /* ── tab bar ──────────────────────────────────────────── */
+    #tab-bar {
+      display: flex;
+      align-items: center;
+      height: var(--tab-h);
+      padding-left: 82px;
+      padding-right: 8px;
+      gap: 2px;
+      -webkit-app-region: drag;
+      overflow-x: auto;
+      overflow-y: hidden;
+      scrollbar-width: none;
+    }
+    #tab-bar::-webkit-scrollbar { display: none; }
+
+    .tab {
+      -webkit-app-region: no-drag;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      height: 28px;
+      padding: 0 8px;
+      border-radius: 6px;
+      color: var(--text2);
+      font-size: 12px;
+      cursor: default;
+      white-space: nowrap;
+      max-width: 200px;
+      min-width: 80px;
+      flex-shrink: 0;
+      transition: background 80ms, color 80ms;
+    }
+    .tab:hover            { background: var(--bg3); color: var(--text); }
+    .tab.active           { background: var(--bg3); color: var(--text); }
+    .tab-title            { flex: 1; overflow: hidden; text-overflow: ellipsis; }
+    .tab-favicon          { width: 14px; height: 14px; flex-shrink: 0; border-radius: 2px; }
+    .tab-favicon.hidden   { display: none; }
+    .tab-close {
+      width: 16px; height: 16px;
+      border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      flex-shrink: 0;
+      color: var(--text2);
+      font-size: 11px;
+      opacity: 0;
+      transition: opacity 80ms, background 80ms;
+    }
+    .tab:hover .tab-close,
+    .tab.active .tab-close { opacity: 1; }
+    .tab-close:hover      { background: var(--border); color: var(--text); }
+
+    #btn-new-tab {
+      -webkit-app-region: no-drag;
+      width: 26px; height: 26px;
+      border-radius: 6px;
+      display: flex; align-items: center; justify-content: center;
+      color: var(--text2);
+      font-size: 18px;
+      font-weight: 300;
+      cursor: default;
+      flex-shrink: 0;
+      transition: background 80ms, color 80ms;
+    }
+    #btn-new-tab:hover { background: var(--bg3); color: var(--text); }
+
+    /* ── nav bar ──────────────────────────────────────────── */
+    #nav-bar {
+      display: flex;
+      align-items: center;
+      height: var(--nav-h);
+      padding: 0 12px;
+      gap: 6px;
+    }
+
+    .nav-btn {
+      width: 28px; height: 28px;
+      border-radius: 6px;
+      display: flex; align-items: center; justify-content: center;
+      color: var(--text2);
+      font-size: 15px;
+      cursor: default;
+      flex-shrink: 0;
+      transition: background 80ms, color 80ms;
+    }
+    .nav-btn:hover        { background: var(--bg3); color: var(--text); }
+    .nav-btn.dim          { opacity: 0.25; pointer-events: none; }
+
+    #url-bar {
+      flex: 1;
+      height: 32px;
+      background: var(--bg3);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 0 12px;
+      color: var(--text);
+      font: 13px/1 -apple-system, BlinkMacSystemFont, 'SF Pro Text', system-ui, sans-serif;
+      outline: none;
+      transition: border-color 120ms, background 120ms;
+      user-select: text;
+      -webkit-user-select: text;
+    }
+    #url-bar::placeholder  { color: var(--text2); }
+    #url-bar:focus         { border-color: var(--accent); background: var(--bg2); }
+
+    .spacer { flex: 1; }
+  </style>
+</head>
+<body>
+  <div id="chrome">
+    <div id="tab-bar">
+      <div id="btn-new-tab" title="New tab (⌘T)">+</div>
+    </div>
+    <div id="nav-bar">
+      <div class="nav-btn dim" id="btn-back"    title="Back (⌘[)">←</div>
+      <div class="nav-btn dim" id="btn-forward" title="Forward (⌘])">→</div>
+      <div class="nav-btn"     id="btn-reload"  title="Reload (⌘R)">↻</div>
+      <input id="url-bar" type="text" placeholder="Search or enter URL…" spellcheck="false" autocomplete="off">
+    </div>
+  </div>
+  <script src="app.js"></script>
+</body>
+</html>

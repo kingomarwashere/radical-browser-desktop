@@ -11,10 +11,16 @@
       --bg:      #0d0d0d;
       --bg2:     #161616;
       --bg3:     #222;
+      --bg4:     #2a2a2a;
       --border:  #2a2a2a;
       --text:    #e2e2e2;
       --text2:   #666;
+      --text3:   #444;
       --accent:  #4f8ef7;
+      --green:   #3fb950;
+      --orange:  #d29922;
+      --red:     #f85149;
+      --blue:    #58a6ff;
       --tab-h:   40px;
       --nav-h:   48px;
     }
@@ -29,7 +35,7 @@
       -webkit-user-select: none;
     }
 
-    /* ── chrome shell ─────────────────────────────────────── */
+    /* ── chrome ────────────────────────────────────────────── */
     #chrome {
       position: fixed;
       inset: 0 0 auto 0;
@@ -41,7 +47,7 @@
       z-index: 100;
     }
 
-    /* ── tab bar ──────────────────────────────────────────── */
+    /* ── tab bar ───────────────────────────────────────────── */
     #tab-bar {
       display: flex;
       align-items: center;
@@ -58,19 +64,12 @@
 
     .tab {
       -webkit-app-region: no-drag;
-      display: flex;
-      align-items: center;
-      gap: 6px;
-      height: 28px;
-      padding: 0 8px;
+      display: flex; align-items: center; gap: 6px;
+      height: 28px; padding: 0 8px;
       border-radius: 6px;
-      color: var(--text2);
-      font-size: 12px;
-      cursor: default;
-      white-space: nowrap;
-      max-width: 200px;
-      min-width: 80px;
-      flex-shrink: 0;
+      color: var(--text2); font-size: 12px;
+      cursor: default; white-space: nowrap;
+      max-width: 200px; min-width: 80px; flex-shrink: 0;
       transition: background 80ms, color 80ms;
     }
     .tab:hover            { background: var(--bg3); color: var(--text); }
@@ -79,14 +78,10 @@
     .tab-favicon          { width: 14px; height: 14px; flex-shrink: 0; border-radius: 2px; }
     .tab-favicon.hidden   { display: none; }
     .tab-close {
-      width: 16px; height: 16px;
-      border-radius: 50%;
+      width: 16px; height: 16px; border-radius: 50%;
       display: flex; align-items: center; justify-content: center;
-      flex-shrink: 0;
-      color: var(--text2);
-      font-size: 11px;
-      opacity: 0;
-      transition: opacity 80ms, background 80ms;
+      flex-shrink: 0; color: var(--text2); font-size: 11px;
+      opacity: 0; transition: opacity 80ms, background 80ms;
     }
     .tab:hover .tab-close,
     .tab.active .tab-close { opacity: 1; }
@@ -94,61 +89,122 @@
 
     #btn-new-tab {
       -webkit-app-region: no-drag;
-      width: 26px; height: 26px;
-      border-radius: 6px;
+      width: 26px; height: 26px; border-radius: 6px;
       display: flex; align-items: center; justify-content: center;
-      color: var(--text2);
-      font-size: 18px;
-      font-weight: 300;
-      cursor: default;
-      flex-shrink: 0;
+      color: var(--text2); font-size: 18px; font-weight: 300;
+      cursor: default; flex-shrink: 0;
       transition: background 80ms, color 80ms;
     }
     #btn-new-tab:hover { background: var(--bg3); color: var(--text); }
 
-    /* ── nav bar ──────────────────────────────────────────── */
+    /* ── nav bar ───────────────────────────────────────────── */
     #nav-bar {
-      display: flex;
-      align-items: center;
-      height: var(--nav-h);
-      padding: 0 12px;
-      gap: 6px;
+      display: flex; align-items: center;
+      height: var(--nav-h); padding: 0 12px; gap: 6px;
     }
 
     .nav-btn {
-      width: 28px; height: 28px;
-      border-radius: 6px;
+      width: 28px; height: 28px; border-radius: 6px;
       display: flex; align-items: center; justify-content: center;
-      color: var(--text2);
-      font-size: 15px;
-      cursor: default;
-      flex-shrink: 0;
+      color: var(--text2); font-size: 15px;
+      cursor: default; flex-shrink: 0;
       transition: background 80ms, color 80ms;
     }
-    .nav-btn:hover        { background: var(--bg3); color: var(--text); }
-    .nav-btn.dim          { opacity: 0.25; pointer-events: none; }
+    .nav-btn:hover { background: var(--bg3); color: var(--text); }
+    .nav-btn.dim   { opacity: 0.25; pointer-events: none; }
 
     #url-bar {
-      flex: 1;
-      height: 32px;
-      background: var(--bg3);
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      padding: 0 12px;
-      color: var(--text);
+      flex: 1; height: 32px;
+      background: var(--bg3); border: 1px solid var(--border); border-radius: 8px;
+      padding: 0 12px; color: var(--text);
       font: 13px/1 -apple-system, BlinkMacSystemFont, 'SF Pro Text', system-ui, sans-serif;
-      outline: none;
-      transition: border-color 120ms, background 120ms;
-      user-select: text;
-      -webkit-user-select: text;
+      outline: none; transition: border-color 120ms, background 120ms;
+      user-select: text; -webkit-user-select: text;
     }
-    #url-bar::placeholder  { color: var(--text2); }
-    #url-bar:focus         { border-color: var(--accent); background: var(--bg2); }
+    #url-bar::placeholder { color: var(--text2); }
+    #url-bar:focus        { border-color: var(--accent); background: var(--bg2); }
 
-    .spacer { flex: 1; }
+    /* ── network panel ─────────────────────────────────────── */
+    #panel {
+      display: none;
+      position: fixed; bottom: 0; left: 0; right: 0;
+      height: 260px; z-index: 100;
+      background: var(--bg);
+      border-top: 1px solid var(--border);
+      flex-direction: column;
+    }
+    #panel.open { display: flex; }
+
+    #panel-header {
+      display: flex; align-items: center; gap: 8px;
+      height: 36px; padding: 0 12px; flex-shrink: 0;
+      border-bottom: 1px solid var(--border);
+    }
+
+    #panel-title { font-size: 12px; font-weight: 600; color: var(--text2); }
+
+    .panel-btn {
+      height: 22px; padding: 0 8px; border-radius: 4px;
+      font-size: 11px; color: var(--text2); cursor: default;
+      transition: background 80ms, color 80ms;
+    }
+    .panel-btn:hover     { background: var(--bg3); color: var(--text); }
+    .panel-btn.active    { color: var(--accent); }
+
+    #panel-filter {
+      height: 22px; padding: 0 8px; margin-left: auto;
+      background: var(--bg3); border: 1px solid var(--border); border-radius: 4px;
+      color: var(--text); font-size: 11px; font-family: inherit; outline: none;
+      width: 160px; user-select: text; -webkit-user-select: text;
+    }
+    #panel-filter::placeholder { color: var(--text3); }
+    #panel-filter:focus { border-color: var(--accent); }
+
+    #net-table-wrap {
+      flex: 1; overflow-y: auto; overflow-x: hidden;
+      scrollbar-width: thin; scrollbar-color: var(--bg4) transparent;
+    }
+
+    #net-table {
+      width: 100%; border-collapse: collapse; font-size: 12px;
+      font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+    }
+
+    #net-table thead th {
+      position: sticky; top: 0; background: var(--bg2);
+      padding: 4px 10px; text-align: left;
+      font-size: 10px; font-weight: 600; letter-spacing: .06em;
+      color: var(--text3); text-transform: uppercase;
+      border-bottom: 1px solid var(--border);
+    }
+
+    #net-table tbody tr { border-bottom: 1px solid rgba(255,255,255,.03); }
+    #net-table tbody tr:hover { background: var(--bg2); }
+
+    #net-table td { padding: 3px 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+    .net-method  { width: 46px; font-weight: 600; }
+    .net-url     { max-width: 0; width: 99%; color: var(--text2); }
+    .net-status  { width: 52px; text-align: center; }
+    .net-type    { width: 80px; color: var(--text2); }
+    .net-size    { width: 72px; text-align: right; color: var(--text2); }
+    .net-time    { width: 72px; text-align: right; color: var(--text2); }
+
+    .s-ok       .net-status { color: var(--green); }
+    .s-redirect .net-status { color: var(--blue); }
+    .s-error    .net-status { color: var(--orange); }
+    .s-fail     .net-status { color: var(--red); }
+    .s-pending  .net-status { color: var(--text3); }
+
+    .net-empty {
+      padding: 32px; text-align: center;
+      color: var(--text3); font-size: 12px; font-family: inherit;
+    }
   </style>
 </head>
 <body>
+
+  <!-- chrome -->
   <div id="chrome">
     <div id="tab-bar">
       <div id="btn-new-tab" title="New tab (⌘T)">+</div>
@@ -158,8 +214,36 @@
       <div class="nav-btn dim" id="btn-forward" title="Forward (⌘])">→</div>
       <div class="nav-btn"     id="btn-reload"  title="Reload (⌘R)">↻</div>
       <input id="url-bar" type="text" placeholder="Search or enter URL…" spellcheck="false" autocomplete="off">
+      <div class="nav-btn" id="btn-net" title="Network Inspector (⌘I)" style="font-size:12px;color:var(--text3)">NET</div>
     </div>
   </div>
+
+  <!-- network inspector panel -->
+  <div id="panel">
+    <div id="panel-header">
+      <span id="panel-title">Network</span>
+      <div class="panel-btn" id="btn-net-clear">Clear</div>
+      <div class="panel-btn" id="btn-preserve">Preserve log</div>
+      <input id="panel-filter" type="text" placeholder="Filter URLs…" spellcheck="false" autocomplete="off">
+    </div>
+    <div id="net-table-wrap">
+      <table id="net-table">
+        <thead>
+          <tr>
+            <th class="net-method">Method</th>
+            <th class="net-url">URL</th>
+            <th class="net-status">Status</th>
+            <th class="net-type">Type</th>
+            <th class="net-size">Size</th>
+            <th class="net-time">Time</th>
+          </tr>
+        </thead>
+        <tbody id="net-tbody"></tbody>
+      </table>
+      <div class="net-empty" id="net-empty">No requests yet</div>
+    </div>
+  </div>
+
   <script src="app.js"></script>
 </body>
 </html>

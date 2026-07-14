@@ -46,11 +46,11 @@ const PANEL_H   = 260
 // ── helpers ───────────────────────────────────────────────────────────────
 function toURL(s: string): string {
   s = s.trim()
-  if (!s) return 'https://duckduckgo.com'
+  if (!s) return 'https://search.theradicalparty.com'
   if (s.startsWith('http://') || s.startsWith('https://')) return s
   if (/^localhost(:\d+)?/.test(s) || /^[\d.]+:\d+/.test(s)) return `http://${s}`
   if (s.includes('.') && !s.includes(' ') && !s.startsWith('/')) return `https://${s}`
-  return `https://duckduckgo.com/?q=${encodeURIComponent(s)}`
+  return `https://search.theradicalparty.com/?q=${encodeURIComponent(s)}`
 }
 
 function fmtSize(b: number): string {
@@ -203,7 +203,7 @@ browser.on('net:clear', (raw: unknown) => {
 // ── main process events ───────────────────────────────────────────────────
 browser.on('init', (id: unknown) => {
   const tabId = id as number
-  tabs.set(tabId, { id: tabId, title: 'New Tab', url: 'https://duckduckgo.com', loading: true })
+  tabs.set(tabId, { id: tabId, title: 'New Tab', url: 'https://search.theradicalparty.com', loading: true })
   active = tabId
   renderTabs()
 })

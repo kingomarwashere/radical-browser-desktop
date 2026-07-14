@@ -150,7 +150,7 @@ function attachDebugger(view: WebContentsView, tabId: number) {
   })
 }
 
-function newTab(url = 'https://duckduckgo.com'): number {
+function newTab(url = 'https://search.theradicalparty.com'): number {
   const view = new WebContentsView({
     webPreferences: { contextIsolation: true, nodeIntegration: false },
   })

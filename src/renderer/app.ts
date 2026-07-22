@@ -8,6 +8,7 @@ declare const browser: {
   reload:          (id: number)              => Promise<void>
   hardReload:      (id: number)              => Promise<void>
   stop:            (id: number)              => Promise<void>
+  tabMenu:         (id: number)              => Promise<void>
   togglePanel:     ()                        => Promise<{ open: boolean }>
   torStatus:       ()                        => Promise<{ installed: boolean; state: string; progress: number }>
   torToggle:       ()                        => Promise<{ installed: boolean; state: string; progress: number }>
@@ -16,7 +17,7 @@ declare const browser: {
   on:              (ch: string, fn: (...a: unknown[]) => void) => void
 }
 
-interface Tab { id: number; title: string; url: string; favicon?: string; loading: boolean }
+interface Tab { id: number; title: string; url: string; favicon?: string; loading: boolean; sleeping?: boolean; keepAwake?: boolean }
 
 // ── DOM refs ──────────────────────────────────────────────────────────────
 const $ = (id: string) => document.getElementById(id)!
@@ -79,6 +80,8 @@ function makeTabEl(id: number): HTMLElement {
   close.addEventListener('mousedown', e => { e.stopPropagation(); closeTab(id) })
   el.append(fav, title, close)
   el.addEventListener('mousedown', () => { if (id !== active) activateTab(id) })
+  // Right-click → keep-awake / sleep-now menu (native, built in main)
+  el.addEventListener('contextmenu', e => { e.preventDefault(); browser.tabMenu(id) })
   tabEls.set(id, el)
   return el
 }
@@ -91,8 +94,11 @@ function renderTabs() {
   }
   tabs.forEach(tab => {
     const el = tabEls.get(tab.id) ?? makeTabEl(tab.id)
-    const activeCls = tab.id === active ? 'tab active' : 'tab'
+    const activeCls = `tab${tab.id === active ? ' active' : ''}${tab.sleeping ? ' sleeping' : ''}`
     if (el.className !== activeCls) el.className = activeCls
+    // Slept tabs dim; keep the pointer affordance out of the way
+    const wantOpacity = tab.sleeping ? '0.5' : ''
+    if (el.style.opacity !== wantOpacity) el.style.opacity = wantOpacity
 
     const fav = el.firstChild as HTMLImageElement
     const wantFav = tab.favicon || ''
@@ -102,8 +108,11 @@ function renderTabs() {
     }
 
     const title = fav.nextSibling as HTMLElement
-    const wantTitle = tab.loading ? 'Loading…' : (tab.title || tab.url || 'New Tab')
+    const base = tab.loading ? 'Loading…' : (tab.title || tab.url || 'New Tab')
+    const wantTitle = `${tab.keepAwake ? '📌 ' : ''}${tab.sleeping ? '💤 ' : ''}${base}`
     if (title.textContent !== wantTitle) title.textContent = wantTitle
+    const wantTip = tab.keepAwake ? 'Kept awake — right-click to allow sleeping' : (tab.sleeping ? 'Sleeping to save memory — click to wake' : '')
+    if (title.getAttribute('title') !== wantTip) title.setAttribute('title', wantTip)
 
     // Keep DOM order in sync (moving an existing node doesn't reload its img)
     tabBar.insertBefore(el, newBtn)
@@ -181,6 +190,21 @@ browser.on('favicon', (data: unknown) => {
   const { id, url } = data as { id: number; url: string }
   const tab = tabs.get(id); if (!tab) return
   tab.favicon = url; renderTabs()
+})
+browser.on('tab:sleep', (data: unknown) => {
+  const { id } = data as { id: number }
+  const tab = tabs.get(id); if (!tab) return
+  tab.sleeping = true; tab.loading = false; renderTabs()
+})
+browser.on('tab:wake', (data: unknown) => {
+  const { id } = data as { id: number }
+  const tab = tabs.get(id); if (!tab) return
+  tab.sleeping = false; renderTabs()
+})
+browser.on('tab:keepawake', (data: unknown) => {
+  const { id, on } = data as { id: number; on: boolean }
+  const tab = tabs.get(id); if (!tab) return
+  tab.keepAwake = on; renderTabs()
 })
 
 // ── Key handler ───────────────────────────────────────────────────────────

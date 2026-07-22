@@ -76,6 +76,18 @@ let paletteWin: BrowserWindow | null = null
 const tabs    = new Map<number, WebContentsView>()
 const tabMeta = new Map<number, TabMeta>()
 let activeId: number | null = null
+
+// ── Sleeping tabs (memory saver) ──────────────────────────────────────────────
+// A background tab idle past the threshold is "slept": navigated to about:blank
+// to release its page's DOM/JS heap/images (the bulk of a tab's RAM), keeping
+// the real URL to restore on wake. The webContents (and thus the tab id) stays
+// stable, so nothing downstream breaks. Never sleeps the active tab, a tab the
+// user pinned awake, or a tab playing audio.
+const SLEEP_AFTER_MS = 30 * 60 * 1000            // 30 min idle → sleep
+const lastActive  = new Map<number, number>()    // tabId → ms it last went inactive
+const keepAwake   = new Set<number>()            // tabs the user pinned awake
+const sleepingIds = new Set<number>()            // tabs currently slept (on about:blank)
+const sleepUrl    = new Map<number, string>()    // tabId → URL to restore on wake
 let panelView: WebContentsView | null = null
 let panelH    = 400
 let panelVisible = false
@@ -275,12 +287,14 @@ function newTab(url = 'about:blank'): number {
   const id = view.webContents.id
   tabs.set(id, view)
   tabMeta.set(id, { title: 'New Tab', url })
+  lastActive.set(id, Date.now())
   interceptShortcuts(view)
 
   const push = (ch: string, data: object) => {
     if (!win.isDestroyed()) win.webContents.send(ch, data)
   }
   const pushNav = (u: string) => {
+    if (sleepingIds.has(id)) return   // ignore the about:blank sleep navigation
     tabMeta.set(id, { ...tabMeta.get(id)!, url: u })
     push('nav', { id, url: u })
     push('nav-state', {
@@ -293,12 +307,14 @@ function newTab(url = 'about:blank'): number {
   view.webContents.on('did-navigate',         (_, u) => pushNav(u))
   view.webContents.on('did-navigate-in-page', (_, u) => pushNav(u))
   view.webContents.on('page-title-updated',   (_, title) => {
+    if (sleepingIds.has(id)) return   // keep the pre-sleep title in the tab bar
     tabMeta.set(id, { ...tabMeta.get(id)!, title })
     push('title', { id, title })
   })
-  view.webContents.on('did-start-loading', () => push('loading', { id, v: true }))
-  view.webContents.on('did-stop-loading',  () => push('loading', { id, v: false }))
+  view.webContents.on('did-start-loading', () => { if (!sleepingIds.has(id)) push('loading', { id, v: true }) })
+  view.webContents.on('did-stop-loading',  () => { if (!sleepingIds.has(id)) push('loading', { id, v: false }) })
   view.webContents.on('page-favicon-updated', (_, favicons) => {
+    if (sleepingIds.has(id)) return
     if (favicons[0]) {
       tabMeta.set(id, { ...tabMeta.get(id)!, favicon: favicons[0] })
       push('favicon', { id, url: favicons[0] })
@@ -391,13 +407,37 @@ function newTab(url = 'about:blank'): number {
   return id
 }
 
+function sleepTab(id: number, force = false) {
+  const view = tabs.get(id)
+  if (!view || sleepingIds.has(id) || id === activeId) return
+  if (!force && keepAwake.has(id)) return
+  const url = tabMeta.get(id)?.url
+  if (!url || !/^https?:/i.test(url)) return          // only sleep real web pages
+  if (view.webContents.isCurrentlyAudible()) return   // never sleep audible tabs
+  sleepUrl.set(id, url)
+  sleepingIds.add(id)
+  view.webContents.loadURL('about:blank').catch(() => {})
+  if (!win.isDestroyed()) win.webContents.send('tab:sleep', { id })
+}
+
+function wakeTab(id: number) {
+  if (!sleepingIds.has(id)) return
+  const url = sleepUrl.get(id)
+  sleepingIds.delete(id); sleepUrl.delete(id)
+  if (url) tabs.get(id)?.webContents.loadURL(url).catch(() => {})
+  if (!win.isDestroyed()) win.webContents.send('tab:wake', { id })
+}
+
 function activateTab(id: number, focusURL = false) {
+  if (activeId !== null && activeId !== id) lastActive.set(activeId, Date.now())
   if (activeId !== null) tabs.get(activeId)?.setVisible(false)
   const view = tabs.get(id)
   if (!view) return
+  wakeTab(id)                      // clicking a slept tab wakes it instantly
   view.setVisible(true)
   view.setBounds(viewBounds())
   activeId = id
+  lastActive.set(id, Date.now())
   sendToAll('activated', id)
   win.webContents.send('nav-state', {
     id,
@@ -554,6 +594,15 @@ app.whenReady().then(() => {
     if (panelVisible && panelView) panelView.setBounds(panelBounds())
   })
 
+  // Sleep tabs left idle in the background past the threshold (memory saver).
+  setInterval(() => {
+    const now = Date.now()
+    for (const id of tabs.keys()) {
+      if (id === activeId || keepAwake.has(id) || sleepingIds.has(id)) continue
+      if (now - (lastActive.get(id) ?? now) > SLEEP_AFTER_MS) sleepTab(id)
+    }
+  }, 60 * 1000).unref?.()
+
   // ── IPC ───────────────────────────────────────────────────────────────────
   ipcMain.handle('tab:new', (_, url?: string) => {
     const id = newTab(url)
@@ -570,12 +619,28 @@ app.whenReady().then(() => {
     win.contentView.removeChildView(view)
     view.webContents.close()
     tabs.delete(id); tabMeta.delete(id)
+    lastActive.delete(id); keepAwake.delete(id); sleepingIds.delete(id); sleepUrl.delete(id)
     if (activeId === id) {
       activeId = null
       const remaining = [...tabs.keys()]
       if (remaining.length > 0) activateTab(remaining[remaining.length - 1])
     }
     return [...tabs.keys()]
+  })
+
+  // Right-click a tab → keep-awake toggle / sleep-now (see app.ts contextmenu)
+  ipcMain.handle('tab:menu', (_, id: number) => {
+    if (!tabs.has(id)) return
+    const items: MenuItemConstructorOptions[] = [
+      { label: 'Keep Tab Awake', type: 'checkbox', checked: keepAwake.has(id), click: () => {
+        if (keepAwake.has(id)) keepAwake.delete(id)
+        else { keepAwake.add(id); lastActive.set(id, Date.now()) }
+        if (!win.isDestroyed()) win.webContents.send('tab:keepawake', { id, on: keepAwake.has(id) })
+      }},
+      { label: 'Sleep Tab Now', enabled: id !== activeId && !sleepingIds.has(id),
+        click: () => sleepTab(id, true) },
+    ]
+    Menu.buildFromTemplate(items).popup({ window: win })
   })
 
   ipcMain.handle('tab:go', (_, { id, url }: { id: number; url: string }) => {

@@ -10,6 +10,7 @@ contextBridge.exposeInMainWorld('browser', {
   reload:          (id: number)                      => ipcRenderer.invoke('tab:reload', id),
   hardReload:      (id: number)                      => ipcRenderer.invoke('tab:hard-reload', id),
   stop:            (id: number)                      => ipcRenderer.invoke('tab:stop', id),
+  tabMenu:         (id: number)                      => ipcRenderer.invoke('tab:menu', id),
   togglePanel:     ()                                => ipcRenderer.invoke('panel:toggle'),
   torStatus:       ()                                => ipcRenderer.invoke('tor:status'),
   torToggle:       ()                                => ipcRenderer.invoke('tor:toggle'),

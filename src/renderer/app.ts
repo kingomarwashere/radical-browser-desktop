@@ -31,14 +31,19 @@ const btnRld  = $('btn-reload')
 // ── Tab state ─────────────────────────────────────────────────────────────
 const tabs = new Map<number, Tab>()
 let active: number | null = null
+// The tab that was active immediately before `active`. A new tab's `activated`
+// event lands before its `tab:opened`, so by placeTab time `active` is already
+// the new tab — we anchor placement to prevActive (the tab you were on).
+let prevActive: number | null = null
 // Explicit display order of tab ids (Map insertion order would always append).
 const order: number[] = []
 
-// Place a newly-opened tab: right after the currently-active tab, so ⌘T opens
-// next to the tab you're on rather than at the far end of the bar.
+// Place a newly-opened tab right after the tab you were on, so ⌘T opens next
+// to the current tab rather than at the far end of the bar.
 function placeTab(id: number) {
   if (order.includes(id)) return
-  const i = active !== null ? order.indexOf(active) : -1
+  const anchor = prevActive
+  const i = anchor !== null ? order.indexOf(anchor) : -1
   if (i >= 0) order.splice(i + 1, 0, id)
   else order.push(id)
 }
@@ -209,7 +214,9 @@ browser.on('session:restore', (data: unknown) => {
   persistSession()
 })
 browser.on('activated', (id: unknown) => {
-  active = id as number; syncURLBar(); renderTabs(); updateBookmarkBtn(); persistSession()
+  const nid = id as number
+  if (nid !== active) prevActive = active   // remember the tab we're leaving
+  active = nid; syncURLBar(); renderTabs(); updateBookmarkBtn(); persistSession()
 })
 browser.on('nav', (data: unknown) => {
   const { id, url } = data as { id: number; url: string }

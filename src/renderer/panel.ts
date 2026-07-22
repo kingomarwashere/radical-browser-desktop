@@ -238,12 +238,26 @@ function renderNet() {
     </tr>`
   }).join('')
 
-  tbody.querySelectorAll('tr').forEach((tr, i) => {
-    tr.addEventListener('mousedown', () => selectReq(rows[i]))
-  })
   const wrap = $('net-list-wrap')
   if (wrap) wrap.scrollTop = wrap.scrollHeight
 }
+
+// Coalesce bursts of net events (req/res/done can fire hundreds of times per
+// page load) into at most one table rebuild per animation frame.
+let netRenderQueued = false
+function scheduleNetRender() {
+  if (netRenderQueued) return
+  netRenderQueued = true
+  requestAnimationFrame(() => { netRenderQueued = false; renderNet() })
+}
+
+// One delegated click handler instead of re-binding every row on every render.
+$('net-tbody').addEventListener('mousedown', e => {
+  const tr = (e.target as HTMLElement).closest('tr') as HTMLElement | null
+  if (!tr || active === null) return
+  const entry = netById.get(active)?.get(tr.dataset.id ?? '')
+  if (entry) selectReq(entry)
+})
 
 function selectReq(e: NetEntry) {
   selectedReq = e
@@ -767,7 +781,7 @@ panel.on('net:req', (raw: unknown) => {
   }
   if (log.length > 500) idx.delete(log.shift()!.id)
   log.push(entry); idx.set(d.id, entry)
-  if (d.tabId === active && panelTab === 'network') renderNet()
+  if (d.tabId === active && panelTab === 'network') scheduleNetRender()
 })
 
 panel.on('net:res', (raw: unknown) => {
@@ -787,7 +801,7 @@ panel.on('net:res', (raw: unknown) => {
     if (panelTab === 'security') renderSecurity()
   }
 
-  if (d.tabId === active && panelTab === 'network') renderNet()
+  if (d.tabId === active && panelTab === 'network') scheduleNetRender()
   if (selectedReq?.id === d.id) renderDetail()
 })
 
@@ -796,7 +810,7 @@ panel.on('net:done', (raw: unknown) => {
   const entry = netById.get(d.tabId)?.get(d.id)
   if (!entry) return
   entry.endTime = d.endTime; entry.size = d.size
-  if (d.tabId === active && panelTab === 'network') renderNet()
+  if (d.tabId === active && panelTab === 'network') scheduleNetRender()
 })
 
 panel.on('net:fail', (raw: unknown) => {
@@ -804,7 +818,7 @@ panel.on('net:fail', (raw: unknown) => {
   const entry = netById.get(d.tabId)?.get(d.id)
   if (!entry) return
   entry.failed = true; entry.cancelled = d.cancelled
-  if (d.tabId === active && panelTab === 'network') renderNet()
+  if (d.tabId === active && panelTab === 'network') scheduleNetRender()
 })
 
 panel.on('net:clear', (raw: unknown) => {

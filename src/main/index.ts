@@ -632,11 +632,12 @@ app.whenReady().then(() => {
   })
 
   ipcMain.handle('panel:toggle', () => {
+    // Lazily spin up the inspector's renderer process on first use only —
+    // saves a whole WebContentsView's memory for sessions that never open it.
+    if (!panelView) createPanelView()
     panelVisible = !panelVisible
-    if (panelView) {
-      panelView.setVisible(panelVisible)
-      if (panelVisible) panelView.setBounds(panelBounds())
-    }
+    panelView!.setVisible(panelVisible)
+    if (panelVisible) panelView!.setBounds(panelBounds())
     return { open: panelVisible }
   })
 
@@ -955,7 +956,7 @@ app.whenReady().then(() => {
     panelView.setVisible(false)
     panelView.webContents.loadFile(join(__dirname, '../renderer/panel.html'))
   }
-  createPanelView()
+  // Panel is created lazily on first inspector toggle — see panel:toggle above.
 
   win.webContents.once('did-finish-load', () => {
     const id = newTab()

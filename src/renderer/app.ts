@@ -30,6 +30,17 @@ const btnRld  = $('btn-reload')
 // ── Tab state ─────────────────────────────────────────────────────────────
 const tabs = new Map<number, Tab>()
 let active: number | null = null
+// Explicit display order of tab ids (Map insertion order would always append).
+const order: number[] = []
+
+// Place a newly-opened tab: right after the currently-active tab, so ⌘T opens
+// next to the tab you're on rather than at the far end of the bar.
+function placeTab(id: number) {
+  if (order.includes(id)) return
+  const i = active !== null ? order.indexOf(active) : -1
+  if (i >= 0) order.splice(i + 1, 0, id)
+  else order.push(id)
+}
 
 // ── Bookmark state ────────────────────────────────────────────────────────
 let bookmarkedURLs = new Set<string>()
@@ -88,11 +99,16 @@ function makeTabEl(id: number): HTMLElement {
 
 function renderTabs() {
   const newBtn = $('btn-new-tab')
+  // Reconcile the order list with live tabs: append any that arrived without an
+  // explicit position, drop any that closed. Keeps display order authoritative.
+  tabs.forEach((_, id) => { if (!order.includes(id)) order.push(id) })
+  for (let i = order.length - 1; i >= 0; i--) if (!tabs.has(order[i])) order.splice(i, 1)
   // Drop elements for tabs that no longer exist
   for (const [id, el] of tabEls) {
     if (!tabs.has(id)) { el.remove(); tabEls.delete(id) }
   }
-  tabs.forEach(tab => {
+  order.forEach(id => {
+    const tab = tabs.get(id)!
     const el = tabEls.get(tab.id) ?? makeTabEl(tab.id)
     const activeCls = `tab${tab.id === active ? ' active' : ''}${tab.sleeping ? ' sleeping' : ''}`
     if (el.className !== activeCls) el.className = activeCls
@@ -223,6 +239,7 @@ document.addEventListener('keydown', e => {
 browser.on('tab:opened', (id: unknown) => {
   const tabId = id as number
   tabs.set(tabId, { id: tabId, title: 'New Tab', url: '', loading: true })
+  placeTab(tabId)   // insert right after the tab that was active when ⌘T fired
   active = tabId; renderTabs()
   setTimeout(() => { urlBar.focus(); urlBar.select() }, 60)
 })

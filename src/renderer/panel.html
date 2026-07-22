@@ -1,0 +1,459 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self' 'unsafe-inline'">
+  <title>Network Inspector</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:      #0d0d0d;
+      --bg2:     #161616;
+      --bg3:     #222;
+      --bg4:     #2a2a2a;
+      --border:  #2a2a2a;
+      --text:    #e2e2e2;
+      --text2:   #666;
+      --text3:   #444;
+      --accent:  #4f8ef7;
+      --green:   #3fb950;
+      --orange:  #d29922;
+      --red:     #f85149;
+      --blue:    #58a6ff;
+      --mono:    'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+      --green2:  #3fb950;
+      --warn:    #d29922;
+      --red2:    #f85149;
+      --pink:    #ff0099;
+    }
+
+    html, body {
+      height: 100%;
+      background: var(--bg);
+      color: var(--text);
+      font: 13px/1 -apple-system, BlinkMacSystemFont, 'SF Pro Text', system-ui, sans-serif;
+      overflow: hidden;
+      user-select: none;
+      -webkit-user-select: none;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* drag handle */
+    #panel-resize {
+      height: 4px; flex-shrink: 0; cursor: ns-resize; background: var(--border);
+      transition: background 80ms;
+    }
+    #panel-resize:hover, #panel-resize.dragging { background: var(--accent); }
+
+    /* tab bar */
+    #panel-tabbar {
+      display: flex; align-items: center;
+      height: 34px; flex-shrink: 0; border-bottom: 1px solid var(--border);
+      background: var(--bg2); padding: 0 8px; gap: 2px;
+    }
+    .ptab {
+      height: 26px; padding: 0 12px; display: flex; align-items: center;
+      font-size: 10px; font-weight: 700; letter-spacing: 1.2px; text-transform: uppercase;
+      color: var(--text3); cursor: default; border-radius: 4px;
+      transition: color 80ms, background 80ms;
+    }
+    .ptab:hover  { color: var(--text2); background: var(--bg3); }
+    .ptab.active { color: var(--text); background: var(--bg3); }
+
+    #panel-controls {
+      margin-left: auto; display: flex; align-items: center; gap: 6px;
+    }
+    .panel-btn {
+      height: 22px; padding: 0 8px; border-radius: 3px;
+      font-size: 10px; font-weight: 600; letter-spacing: .5px; text-transform: uppercase;
+      color: var(--text3); cursor: default; transition: color 80ms, background 80ms;
+    }
+    .panel-btn:hover  { color: var(--text); background: var(--bg3); }
+    .panel-btn.active { color: var(--accent); }
+    #panel-filter {
+      height: 22px; padding: 0 8px;
+      background: var(--bg3); border: 1px solid var(--border); border-radius: 3px;
+      color: var(--text); font-size: 11px; font-family: var(--mono); outline: none;
+      width: 180px; user-select: text; -webkit-user-select: text;
+    }
+    #panel-filter::placeholder { color: var(--text3); }
+    #panel-filter:focus { border-color: var(--accent); }
+
+    /* tab content areas */
+    .ptab-content { display: none; flex: 1; overflow: hidden; }
+    .ptab-content.active { display: flex; flex-direction: column; }
+
+    /* ── NETWORK TAB ─────────────────────────────────────── */
+    #net-split {
+      display: flex; flex: 1; overflow: hidden;
+    }
+    #net-list-wrap {
+      flex: 1; overflow-y: auto; overflow-x: hidden; min-width: 0;
+      scrollbar-width: thin; scrollbar-color: var(--bg4) transparent;
+      border-right: 1px solid var(--border);
+    }
+    #net-detail {
+      width: 400px; flex-shrink: 0; display: none; flex-direction: column;
+      overflow: hidden;
+    }
+    #net-detail.open { display: flex; }
+    #detail-tabbar {
+      display: flex; height: 30px; flex-shrink: 0;
+      border-bottom: 1px solid var(--border); background: var(--bg2);
+      padding: 0 6px; gap: 2px; align-items: center;
+    }
+    .dtab {
+      height: 22px; padding: 0 10px; display: flex; align-items: center;
+      font-size: 10px; font-weight: 600; letter-spacing: 1px; text-transform: uppercase;
+      color: var(--text3); cursor: default; border-radius: 3px;
+      transition: color 80ms, background 80ms;
+    }
+    .dtab:hover  { color: var(--text2); background: var(--bg3); }
+    .dtab.active { color: var(--text); background: var(--bg3); }
+    #detail-close {
+      margin-left: auto; font-size: 14px; color: var(--text3); cursor: default;
+      padding: 2px 6px; border-radius: 3px; transition: color 80ms;
+    }
+    #detail-close:hover { color: var(--text); }
+    #detail-body {
+      flex: 1; overflow-y: auto; overflow-x: hidden; padding: 10px;
+      font: 11px/1.7 var(--mono); color: var(--text2);
+      scrollbar-width: thin; scrollbar-color: var(--bg4) transparent;
+    }
+    .dhead { font-size: 10px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; color: var(--text3); margin: 8px 0 4px; }
+    .dhead:first-child { margin-top: 0; }
+    .dkv { display: flex; gap: 8px; min-height: 18px; }
+    .dk  { color: var(--accent); flex-shrink: 0; min-width: 180px; }
+    .dv  { color: var(--text); word-break: break-all; }
+    .warn-badge { display: inline-block; padding: 1px 6px; border-radius: 2px; font-size: 9px; font-weight: 700; letter-spacing: .5px; text-transform: uppercase; margin: 2px 2px 0 0; }
+    .wb-critical { background: rgba(248,81,73,.15); color: var(--red2); border: 1px solid rgba(248,81,73,.3); }
+    .wb-high     { background: rgba(255,0,153,.12); color: var(--pink); border: 1px solid rgba(255,0,153,.3); }
+    .wb-medium   { background: rgba(210,153,34,.15); color: var(--warn); border: 1px solid rgba(210,153,34,.3); }
+    .wb-low      { background: rgba(255,255,255,.05); color: var(--text3); border: 1px solid var(--border); }
+    .wb-ok       { background: rgba(63,185,80,.1); color: var(--green2); border: 1px solid rgba(63,185,80,.25); }
+
+    #net-table {
+      width: 100%; border-collapse: collapse; font-size: 11px;
+      font-family: var(--mono);
+    }
+    #net-table thead th {
+      position: sticky; top: 0; background: var(--bg2);
+      padding: 3px 8px; text-align: left;
+      font-size: 9px; font-weight: 700; letter-spacing: .08em;
+      color: var(--text3); text-transform: uppercase;
+      border-bottom: 1px solid var(--border);
+    }
+    #net-table tbody tr { border-bottom: 1px solid rgba(255,255,255,.03); cursor: default; }
+    #net-table tbody tr:hover  { background: var(--bg2); }
+    #net-table tbody tr.sel    { background: rgba(79,142,247,.12) !important; }
+    #net-table td { padding: 2px 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .nc-method { width: 44px; font-weight: 700; }
+    .nc-url    { max-width: 0; width: 99%; color: var(--text2); }
+    .nc-status { width: 46px; text-align: center; }
+    .nc-type   { width: 68px; color: var(--text3); }
+    .nc-size   { width: 58px; text-align: right; color: var(--text3); }
+    .nc-time   { width: 58px; text-align: right; color: var(--text3); }
+    .nc-warn   { width: 28px; text-align: center; font-size: 10px; }
+    .s-ok      .nc-status { color: var(--green2); }
+    .s-redirect .nc-status{ color: var(--blue); }
+    .s-warn    .nc-status { color: var(--warn); }
+    .s-error   .nc-status { color: var(--red2); }
+    .s-fail    .nc-status { color: var(--red2); }
+    .s-pending .nc-status { color: var(--text3); }
+    .has-warn  .nc-warn   { color: var(--warn); }
+    #net-empty {
+      padding: 28px; text-align: center;
+      color: var(--text3); font-size: 11px; font-family: var(--mono);
+    }
+
+    /* ── SECURITY TAB ────────────────────────────────────── */
+    #sec-wrap {
+      flex: 1; overflow-y: auto; padding: 12px;
+      scrollbar-width: thin; scrollbar-color: var(--bg4) transparent;
+    }
+    #sec-intro { font-size: 11px; color: var(--text3); padding: 24px; text-align: center; }
+    #sec-grade-row {
+      display: flex; align-items: center; justify-content: space-between;
+      margin-bottom: 12px; padding-bottom: 10px; border-bottom: 1px solid var(--border);
+    }
+    #sec-url   { font-size: 11px; color: var(--text2); font-family: var(--mono); overflow: hidden; text-overflow: ellipsis; }
+    #sec-grade {
+      width: 40px; height: 40px; border-radius: 4px; flex-shrink: 0;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 18px; font-weight: 700;
+    }
+    .grade-a  { background: rgba(63,185,80,.15); color: var(--green2); }
+    .grade-b  { background: rgba(79,142,247,.15); color: var(--blue); }
+    .grade-c  { background: rgba(210,153,34,.15); color: var(--warn); }
+    .grade-df { background: rgba(248,81,73,.15); color: var(--red2); }
+
+    #sec-section-title {
+      font-size: 10px; font-weight: 700; letter-spacing: 1.5px; text-transform: uppercase;
+      color: var(--text3); margin: 10px 0 6px;
+    }
+    .sec-check {
+      display: flex; align-items: flex-start; gap: 10px;
+      padding: 7px 0; border-bottom: 1px solid rgba(255,255,255,.04);
+    }
+    .sec-check-icon { width: 16px; flex-shrink: 0; margin-top: 1px; font-size: 12px; }
+    .sec-check-name { font-size: 11px; font-weight: 600; color: var(--text); min-width: 200px; font-family: var(--mono); }
+    .sec-check-value { font-size: 10px; color: var(--text2); font-family: var(--mono); overflow: hidden; text-overflow: ellipsis; }
+    .sec-check-desc { font-size: 10px; color: var(--text3); margin-top: 1px; }
+    .sec-check-body { flex: 1; min-width: 0; }
+    .sev-critical .sec-check-name { color: var(--red2); }
+    .sev-high     .sec-check-name { color: var(--pink); }
+    .sev-medium   .sec-check-name { color: var(--warn); }
+
+    #sec-tech { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+    .tech-badge {
+      padding: 3px 8px; border-radius: 3px; font-size: 10px; font-weight: 600;
+      background: var(--bg3); color: var(--text2); border: 1px solid var(--border);
+    }
+    .tech-badge.warn { background: rgba(210,153,34,.1); color: var(--warn); border-color: rgba(210,153,34,.3); }
+
+    /* ── COOKIES TAB ─────────────────────────────────────── */
+    #cookie-wrap { flex: 1; overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--bg4) transparent; }
+    #cookie-table { width: 100%; border-collapse: collapse; font-size: 11px; font-family: var(--mono); }
+    #cookie-table thead th {
+      position: sticky; top: 0; background: var(--bg2);
+      padding: 3px 8px; text-align: left;
+      font-size: 9px; font-weight: 700; letter-spacing: .08em;
+      color: var(--text3); text-transform: uppercase;
+      border-bottom: 1px solid var(--border);
+    }
+    #cookie-table td { padding: 3px 8px; border-bottom: 1px solid rgba(255,255,255,.03); color: var(--text2); max-width: 200px; overflow: hidden; text-overflow: ellipsis; }
+    .ck-flag-y { color: var(--green2); }
+    .ck-flag-n { color: var(--red2); }
+    #cookie-msg { padding: 24px; text-align: center; color: var(--text3); font-size: 11px; font-family: var(--mono); }
+
+    /* ── TOOLS TAB ───────────────────────────────────────── */
+    #tools-wrap { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+    #tools-tabbar {
+      display: flex; height: 30px; flex-shrink: 0; padding: 0 6px; gap: 2px;
+      align-items: center; border-bottom: 1px solid var(--border); background: var(--bg2);
+    }
+    .ttab {
+      height: 22px; padding: 0 10px; display: flex; align-items: center;
+      font-size: 10px; font-weight: 600; letter-spacing: 1px; text-transform: uppercase;
+      color: var(--text3); cursor: default; border-radius: 3px;
+      transition: color 80ms, background 80ms;
+    }
+    .ttab:hover  { color: var(--text2); background: var(--bg3); }
+    .ttab.active { color: var(--text); background: var(--bg3); }
+    #tools-content { flex: 1; padding: 12px; overflow-y: auto; display: flex; gap: 12px; }
+    .tool-col { flex: 1; display: flex; flex-direction: column; gap: 8px; }
+    .tool-label {
+      font-size: 10px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase;
+      color: var(--text3); margin-bottom: 2px;
+    }
+    .tool-textarea {
+      background: var(--bg3); border: 1px solid var(--border); color: var(--text);
+      font: 11px/1.6 var(--mono); padding: 8px; resize: none; outline: none;
+      height: 80px; user-select: text; -webkit-user-select: text;
+    }
+    .tool-textarea:focus { border-color: var(--accent); }
+    .tool-btns { display: flex; gap: 6px; flex-wrap: wrap; }
+    .tool-btn {
+      padding: 5px 12px;
+      background: var(--bg3); border: 1px solid var(--border);
+      font: 10px/1 var(--mono); font-weight: 700; letter-spacing: .5px; text-transform: uppercase;
+      color: var(--text2); cursor: default; transition: all 80ms;
+    }
+    .tool-btn:hover   { border-color: var(--accent); color: var(--accent); }
+    .tool-btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+    .tool-btn.primary:hover { background: #5f9eff; }
+    .tool-select {
+      background: var(--bg3); border: 1px solid var(--border);
+      color: var(--text); font: 11px/1 var(--mono); padding: 5px 8px; outline: none;
+    }
+    .tool-select:focus { border-color: var(--accent); }
+    .jwt-section { background: var(--bg2); border: 1px solid var(--border); padding: 8px; margin-top: 4px; }
+    .jwt-label { font-size: 9px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; color: var(--text3); margin-bottom: 4px; }
+    .jwt-val { font: 10px/1.6 var(--mono); color: var(--text); word-break: break-all; }
+    .replay-section { display: flex; flex-direction: column; gap: 8px; }
+    .replay-row { display: flex; gap: 6px; }
+    .replay-method {
+      background: var(--bg3); border: 1px solid var(--border);
+      color: var(--text); font: 11px/1 var(--mono); font-weight: 700; padding: 5px 8px; outline: none; width: 80px;
+    }
+    .replay-url {
+      flex: 1; background: var(--bg3); border: 1px solid var(--border);
+      color: var(--text); font: 11px/1 var(--mono); padding: 5px 8px; outline: none;
+      user-select: text; -webkit-user-select: text;
+    }
+    .replay-url:focus, .replay-method:focus { border-color: var(--accent); }
+    #replay-res {
+      background: var(--bg3); border: 1px solid var(--border);
+      font: 10px/1.6 var(--mono); color: var(--text2); padding: 8px;
+      height: 100px; overflow-y: auto;
+    }
+
+    /* ── RECON TAB ───────────────────────────────────────── */
+    #recon-wrap { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+    #recon-tabbar {
+      display: flex; height: 30px; flex-shrink: 0; padding: 0 6px; gap: 2px;
+      align-items: center; border-bottom: 1px solid var(--border); background: var(--bg2);
+    }
+    #recon-body { flex: 1; display: flex; flex-direction: column; padding: 12px; gap: 10px; overflow: hidden; }
+    #recon-target-row { display: flex; gap: 6px; flex-shrink: 0; }
+    #recon-target {
+      flex: 1; background: var(--bg3); border: 1px solid var(--border);
+      color: var(--text); font: 11px/1 var(--mono); padding: 6px 8px; outline: none;
+      user-select: text; -webkit-user-select: text;
+    }
+    #recon-target:focus { border-color: var(--accent); }
+    #recon-output {
+      flex: 1; overflow-y: auto; background: var(--bg3); border: 1px solid var(--border);
+      font: 11px/1.6 var(--mono); color: var(--text2); padding: 10px;
+      white-space: pre-wrap; word-break: break-all; user-select: text; -webkit-user-select: text;
+      scrollbar-width: thin; scrollbar-color: var(--bg4) transparent;
+    }
+    #recon-output pre { white-space: pre-wrap; word-break: break-all; font: 11px/1.6 var(--mono); color: var(--text); }
+    .recon-head { font-size: 10px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; color: var(--text3); margin: 10px 0 4px; }
+    .recon-head:first-child { margin-top: 0; }
+    .recon-kv { display: flex; gap: 8px; }
+    .recon-k  { color: var(--accent); flex-shrink: 0; min-width: 150px; }
+    .recon-v  { color: var(--text); word-break: break-all; }
+    .recon-open  { color: var(--green2); }
+    .recon-dim   { color: var(--text3); }
+    .recon-red   { color: var(--red2); }
+    /* power tools */
+    .pt-card {
+      display: flex; align-items: center; gap: 10px; padding: 8px 10px;
+      border: 1px solid var(--border); border-radius: 6px; margin-bottom: 6px; background: var(--bg2);
+    }
+    .pt-card.off { opacity: 0.55; }
+    .pt-info { flex: 1; min-width: 0; }
+    .pt-name { font-size: 12px; font-weight: 700; color: var(--text); }
+    .pt-desc { font-size: 10px; color: var(--text3); margin-top: 1px; }
+    .pt-badge { font-size: 9px; font-weight: 700; letter-spacing: .5px; padding: 2px 6px; border-radius: 3px; flex-shrink: 0; }
+    .pt-badge.on  { background: rgba(63,185,80,.15); color: var(--green2); border: 1px solid rgba(63,185,80,.3); }
+    .pt-badge.no  { background: rgba(255,255,255,.04); color: var(--text3); border: 1px solid var(--border); }
+    .pt-run { flex-shrink: 0; }
+    .pt-console { margin-top: 8px; background: #08080a; border: 1px solid var(--border); border-radius: 6px;
+      padding: 10px; font: 11px/1.5 var(--mono); color: #cdd6e0; white-space: pre-wrap; word-break: break-all;
+      max-height: none; user-select: text; -webkit-user-select: text; }
+    .pt-console .cmd { color: var(--accent); }
+    .pt-console .err { color: var(--warn); }
+    .pt-console .done { color: var(--green2); }
+  </style>
+</head>
+<body>
+
+  <div id="panel-resize"></div>
+
+  <div id="panel-tabbar">
+    <div class="ptab active" data-ptab="network">NET</div>
+    <div class="ptab" data-ptab="security">SECURITY</div>
+    <div class="ptab" data-ptab="cookies">COOKIES</div>
+    <div class="ptab" data-ptab="tools">TOOLS</div>
+    <div class="ptab" data-ptab="recon">RECON</div>
+    <div id="panel-controls">
+      <input id="panel-filter" type="text" placeholder="Filter URLs…" spellcheck="false" autocomplete="off">
+      <div class="panel-btn" id="btn-preserve">Preserve</div>
+      <div class="panel-btn" id="btn-net-clear">Clear</div>
+    </div>
+  </div>
+
+  <!-- NETWORK -->
+  <div id="ptab-network" class="ptab-content active">
+    <div id="net-split">
+      <div id="net-list-wrap">
+        <table id="net-table">
+          <thead><tr>
+            <th class="nc-method">Method</th>
+            <th class="nc-url">URL</th>
+            <th class="nc-status">Status</th>
+            <th class="nc-type">Type</th>
+            <th class="nc-size">Size</th>
+            <th class="nc-time">Time</th>
+            <th class="nc-warn">⚠</th>
+          </tr></thead>
+          <tbody id="net-tbody"></tbody>
+        </table>
+        <div id="net-empty">No requests yet — load a page</div>
+      </div>
+
+      <div id="net-detail">
+        <div id="detail-tabbar">
+          <div class="dtab active" data-dtab="headers">HEADERS</div>
+          <div class="dtab" data-dtab="body">BODY</div>
+          <div class="dtab" data-dtab="replay">REPLAY</div>
+          <div id="detail-close">×</div>
+        </div>
+        <div id="detail-body"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- SECURITY -->
+  <div id="ptab-security" class="ptab-content">
+    <div id="sec-wrap">
+      <div id="sec-intro">Load a page to see security analysis</div>
+      <div id="sec-data" style="display:none">
+        <div id="sec-grade-row">
+          <div id="sec-url"></div>
+          <div id="sec-grade"></div>
+        </div>
+        <div id="sec-checks"></div>
+        <div id="sec-section-title" style="margin-top:12px">DETECTED TECH STACK</div>
+        <div id="sec-tech"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- COOKIES -->
+  <div id="ptab-cookies" class="ptab-content">
+    <div id="cookie-wrap">
+      <div id="cookie-msg">Click the COOKIES tab to load cookies for this page</div>
+      <table id="cookie-table" style="display:none">
+        <thead><tr>
+          <th>Name</th><th>Value</th><th>Domain</th><th>Path</th>
+          <th>HttpOnly</th><th>Secure</th><th>SameSite</th>
+        </tr></thead>
+        <tbody id="cookie-tbody"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- TOOLS -->
+  <div id="ptab-tools" class="ptab-content">
+    <div id="tools-wrap">
+      <div id="tools-tabbar">
+        <div class="ttab active" data-ttab="base64">BASE64</div>
+        <div class="ttab" data-ttab="url">URL ENC</div>
+        <div class="ttab" data-ttab="jwt">JWT</div>
+        <div class="ttab" data-ttab="hash">HASH</div>
+        <div class="ttab" data-ttab="replay">REPLAY</div>
+      </div>
+      <div id="tools-content"></div>
+    </div>
+  </div>
+
+  <!-- RECON -->
+  <div id="ptab-recon" class="ptab-content">
+    <div id="recon-wrap">
+      <div id="recon-tabbar">
+        <div class="ttab active" data-rtab="dns">DNS</div>
+        <div class="ttab" data-rtab="ports">PORTS</div>
+        <div class="ttab" data-rtab="tls">TLS</div>
+        <div class="ttab" data-rtab="whois">WHOIS</div>
+        <div class="ttab" data-rtab="http">HTTP</div>
+        <div class="ttab" data-rtab="subdomains">SUBDOMAINS</div>
+        <div class="ttab" data-rtab="power">⚡ POWER TOOLS</div>
+      </div>
+      <div id="recon-body">
+        <div id="recon-target-row">
+          <input id="recon-target" type="text" placeholder="target host or domain…" spellcheck="false" autocomplete="off">
+          <button class="tool-btn primary" id="recon-run">Run</button>
+        </div>
+        <div id="recon-output">Enter a target and hit Run.</div>
+      </div>
+    </div>
+  </div>
+
+  <script src="panel.js"></script>
+</body>
+</html>

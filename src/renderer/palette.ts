@@ -7,17 +7,16 @@ declare const browser: {
   }
 }
 
-interface PTab { id: number; title: string; url: string; favicon?: string }
-interface PItem {
-  favicon?: string; label: string; sub?: string; key?: string
-  onSelect: () => void
-}
+interface PTab      { id: number; title: string; url: string; favicon?: string }
+interface PBookmark { url: string; title: string; favicon?: string }
+interface PItem     { favicon?: string; label: string; sub?: string; key?: string; onSelect: () => void }
 
 const input   = document.getElementById('input')   as HTMLInputElement
 const results = document.getElementById('results')!
 
-let allTabs: PTab[] = []
-let sel = 0
+let allTabs:      PTab[]      = []
+let allBookmarks: PBookmark[] = []
+let sel  = 0
 let flat: PItem[] = []
 
 const COMMANDS: PItem[] = [
@@ -45,8 +44,19 @@ function getSections(q: string) {
 
   const cmdItems = COMMANDS.filter(c => !lq || c.label.toLowerCase().includes(lq))
 
-  if (tabItems.length) sections.push({ section: 'Open Tabs', items: tabItems })
-  if (cmdItems.length) sections.push({ section: 'Commands', items: cmdItems })
+  const bmAll = allBookmarks.filter(b =>
+    !lq || b.title.toLowerCase().includes(lq) || b.url.toLowerCase().includes(lq)
+  )
+  const bmItems = (lq ? bmAll : bmAll.slice(0, 6)).map(b => ({
+    favicon: b.favicon,
+    label: b.title || b.url,
+    sub: b.url.replace(/^https?:\/\//, ''),
+    onSelect: () => browser.palette.command('navigate:' + b.url),
+  }))
+
+  if (tabItems.length)  sections.push({ section: 'Open Tabs', items: tabItems })
+  if (bmItems.length)   sections.push({ section: 'Bookmarks', items: bmItems })
+  if (cmdItems.length)  sections.push({ section: 'Commands', items: cmdItems })
   return sections
 }
 
@@ -89,8 +99,9 @@ function activate() {
 }
 
 browser.on('palette:init', (raw: unknown) => {
-  const { tabs } = raw as { tabs: PTab[] }
+  const { tabs, bookmarks } = raw as { tabs: PTab[]; bookmarks?: PBookmark[] }
   allTabs = tabs
+  allBookmarks = bookmarks ?? []
   render('')
   input.focus()
 })

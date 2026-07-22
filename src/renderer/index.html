@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self' 'unsafe-inline'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self' 'unsafe-inline'; img-src 'self' data: https: http:">
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='18' fill='%230a0a0c'/><circle cx='50' cy='50' r='36' fill='%231e3a6e'/><text y='.9em' x='18' font-size='62' font-family='system-ui' font-weight='700' fill='%23e8eeff'>R</text></svg>">
   <title>Radical Browser</title>
   <style>
@@ -125,82 +125,19 @@
     #url-bar::placeholder { color: var(--text2); }
     #url-bar:focus        { border-color: var(--accent); background: var(--bg2); }
 
-    /* ── network panel ─────────────────────────────────────── */
-    #panel {
-      display: none;
-      position: fixed; bottom: 0; left: 0; right: 0;
-      height: 260px; z-index: 100;
-      background: var(--bg);
-      border-top: 1px solid var(--border);
-      flex-direction: column;
-    }
-    #panel.open { display: flex; }
+    #btn-bookmark { font-size: 16px; }
+    #btn-bookmark.bookmarked { color: #f5c518; }
 
-    #panel-header {
-      display: flex; align-items: center; gap: 8px;
-      height: 36px; padding: 0 12px; flex-shrink: 0;
-      border-bottom: 1px solid var(--border);
+    #btn-tor { font-size: 14px; position: relative; }
+    #btn-tor.starting { color: #d29922; }
+    #btn-tor.on       { color: #9b59d0; }
+    #btn-tor.on:hover, #btn-tor.starting:hover { background: var(--bg3); }
+    #btn-tor .tor-pct {
+      position: absolute; bottom: -2px; right: -2px;
+      font-size: 8px; font-weight: 700; color: #d29922;
+      background: var(--bg); border-radius: 3px; padding: 0 1px; line-height: 1.2;
     }
 
-    #panel-title { font-size: 12px; font-weight: 600; color: var(--text2); }
-
-    .panel-btn {
-      height: 22px; padding: 0 8px; border-radius: 4px;
-      font-size: 11px; color: var(--text2); cursor: default;
-      transition: background 80ms, color 80ms;
-    }
-    .panel-btn:hover     { background: var(--bg3); color: var(--text); }
-    .panel-btn.active    { color: var(--accent); }
-
-    #panel-filter {
-      height: 22px; padding: 0 8px; margin-left: auto;
-      background: var(--bg3); border: 1px solid var(--border); border-radius: 4px;
-      color: var(--text); font-size: 11px; font-family: inherit; outline: none;
-      width: 160px; user-select: text; -webkit-user-select: text;
-    }
-    #panel-filter::placeholder { color: var(--text3); }
-    #panel-filter:focus { border-color: var(--accent); }
-
-    #net-table-wrap {
-      flex: 1; overflow-y: auto; overflow-x: hidden;
-      scrollbar-width: thin; scrollbar-color: var(--bg4) transparent;
-    }
-
-    #net-table {
-      width: 100%; border-collapse: collapse; font-size: 12px;
-      font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
-    }
-
-    #net-table thead th {
-      position: sticky; top: 0; background: var(--bg2);
-      padding: 4px 10px; text-align: left;
-      font-size: 10px; font-weight: 600; letter-spacing: .06em;
-      color: var(--text3); text-transform: uppercase;
-      border-bottom: 1px solid var(--border);
-    }
-
-    #net-table tbody tr { border-bottom: 1px solid rgba(255,255,255,.03); }
-    #net-table tbody tr:hover { background: var(--bg2); }
-
-    #net-table td { padding: 3px 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-
-    .net-method  { width: 46px; font-weight: 600; }
-    .net-url     { max-width: 0; width: 99%; color: var(--text2); }
-    .net-status  { width: 52px; text-align: center; }
-    .net-type    { width: 80px; color: var(--text2); }
-    .net-size    { width: 72px; text-align: right; color: var(--text2); }
-    .net-time    { width: 72px; text-align: right; color: var(--text2); }
-
-    .s-ok       .net-status { color: var(--green); }
-    .s-redirect .net-status { color: var(--blue); }
-    .s-error    .net-status { color: var(--orange); }
-    .s-fail     .net-status { color: var(--red); }
-    .s-pending  .net-status { color: var(--text3); }
-
-    .net-empty {
-      padding: 32px; text-align: center;
-      color: var(--text3); font-size: 12px; font-family: inherit;
-    }
   </style>
 </head>
 <body>
@@ -213,35 +150,10 @@
     <div id="nav-bar">
       <div class="nav-btn dim" id="btn-back"    title="Back (⌘[)">←</div>
       <div class="nav-btn dim" id="btn-forward" title="Forward (⌘])">→</div>
-      <div class="nav-btn"     id="btn-reload"  title="Reload (⌘R)">↻</div>
+      <div class="nav-btn"     id="btn-reload"  title="Reload (⌘R) — ⇧-click or ⌘⇧R to hard reload">↻</div>
       <input id="url-bar" type="text" placeholder="Search or enter URL…" spellcheck="false" autocomplete="off">
-      <div class="nav-btn" id="btn-net" title="Network Inspector (⌘I)" style="font-size:12px;color:var(--text3)">NET</div>
-    </div>
-  </div>
-
-  <!-- network inspector panel -->
-  <div id="panel">
-    <div id="panel-header">
-      <span id="panel-title">Network</span>
-      <div class="panel-btn" id="btn-net-clear">Clear</div>
-      <div class="panel-btn" id="btn-preserve">Preserve log</div>
-      <input id="panel-filter" type="text" placeholder="Filter URLs…" spellcheck="false" autocomplete="off">
-    </div>
-    <div id="net-table-wrap">
-      <table id="net-table">
-        <thead>
-          <tr>
-            <th class="net-method">Method</th>
-            <th class="net-url">URL</th>
-            <th class="net-status">Status</th>
-            <th class="net-type">Type</th>
-            <th class="net-size">Size</th>
-            <th class="net-time">Time</th>
-          </tr>
-        </thead>
-        <tbody id="net-tbody"></tbody>
-      </table>
-      <div class="net-empty" id="net-empty">No requests yet</div>
+      <div class="nav-btn" id="btn-bookmark" title="Bookmark this page">☆</div>
+      <div class="nav-btn" id="btn-tor" title="Tor: off">🧅</div>
     </div>
   </div>
 

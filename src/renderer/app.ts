@@ -61,25 +61,51 @@ function toURL(s: string): string {
   return `${SEARCH_URL}/?q=${encodeURIComponent(s)}`
 }
 
-// ── Tab rendering ─────────────────────────────────────────────────────────
+// ── Tab rendering (incremental — reuse elements, no full teardown) ──────────
+// Rebuilding the whole bar on every title/favicon/loading event recreated each
+// <img>, causing favicon flicker + re-fetch and re-attached listeners. Instead
+// we keep a persistent element per tab and mutate only what changed.
+const tabEls = new Map<number, HTMLElement>()
+
+function makeTabEl(id: number): HTMLElement {
+  const el = document.createElement('div')
+  el.dataset.id = String(id)
+  const fav = document.createElement('img')
+  fav.className = 'tab-favicon hidden'
+  const title = document.createElement('span')
+  title.className = 'tab-title'
+  const close = document.createElement('span')
+  close.className = 'tab-close'; close.textContent = '×'
+  close.addEventListener('mousedown', e => { e.stopPropagation(); closeTab(id) })
+  el.append(fav, title, close)
+  el.addEventListener('mousedown', () => { if (id !== active) activateTab(id) })
+  tabEls.set(id, el)
+  return el
+}
+
 function renderTabs() {
-  document.querySelectorAll('.tab').forEach(el => el.remove())
   const newBtn = $('btn-new-tab')
+  // Drop elements for tabs that no longer exist
+  for (const [id, el] of tabEls) {
+    if (!tabs.has(id)) { el.remove(); tabEls.delete(id) }
+  }
   tabs.forEach(tab => {
-    const el = document.createElement('div')
-    el.className = `tab${tab.id === active ? ' active' : ''}`
-    el.dataset.id = String(tab.id)
-    const fav = document.createElement('img')
-    fav.className = `tab-favicon${tab.favicon ? '' : ' hidden'}`
-    if (tab.favicon) fav.src = tab.favicon
-    const title = document.createElement('span')
-    title.className = 'tab-title'
-    title.textContent = tab.loading ? 'Loading…' : (tab.title || tab.url || 'New Tab')
-    const close = document.createElement('span')
-    close.className = 'tab-close'; close.textContent = '×'
-    close.addEventListener('mousedown', e => { e.stopPropagation(); closeTab(tab.id) })
-    el.append(fav, title, close)
-    el.addEventListener('mousedown', () => { if (tab.id !== active) activateTab(tab.id) })
+    const el = tabEls.get(tab.id) ?? makeTabEl(tab.id)
+    const activeCls = tab.id === active ? 'tab active' : 'tab'
+    if (el.className !== activeCls) el.className = activeCls
+
+    const fav = el.firstChild as HTMLImageElement
+    const wantFav = tab.favicon || ''
+    if ((fav.getAttribute('src') || '') !== wantFav) {
+      if (wantFav) { fav.src = wantFav; fav.classList.remove('hidden') }
+      else { fav.removeAttribute('src'); fav.classList.add('hidden') }
+    }
+
+    const title = fav.nextSibling as HTMLElement
+    const wantTitle = tab.loading ? 'Loading…' : (tab.title || tab.url || 'New Tab')
+    if (title.textContent !== wantTitle) title.textContent = wantTitle
+
+    // Keep DOM order in sync (moving an existing node doesn't reload its img)
     tabBar.insertBefore(el, newBtn)
   })
 }

@@ -44,10 +44,19 @@ const BLOCKED_HOSTS = new Set([
   'crazyegg.com', 'clarity.ms',
 ])
 function isBlocked(url: string): boolean {
-  try {
-    const host = new URL(url).hostname.toLowerCase().replace(/^www\./, '')
-    return BLOCKED_HOSTS.has(host) || [...BLOCKED_HOSTS].some(b => host.endsWith('.' + b))
-  } catch { return false }
+  // Hot path: runs on every network request. Walk the domain labels
+  // (host, then each parent domain) doing O(labels) Set lookups — no array
+  // allocation or full-list scan. Equivalent to exact-or-suffix match.
+  let h: string
+  try { h = new URL(url).hostname.toLowerCase() } catch { return false }
+  if (h.startsWith('www.')) h = h.slice(4)
+  while (h) {
+    if (BLOCKED_HOSTS.has(h)) return true
+    const dot = h.indexOf('.')
+    if (dot === -1) return false
+    h = h.slice(dot + 1)
+  }
+  return false
 }
 
 // ── Resource type normalisation (webRequest → CDP style) ──────────────────────
@@ -92,9 +101,8 @@ function sendToAll(ch: string, data: unknown) {
   }
 }
 
+// net:* events are consumed only by the inspector panel — send there alone.
 function pushToRenderer(ch: string, tabId: number, data: object) {
-  if (!win || win.isDestroyed() || win.webContents.isDestroyed()) return
-  win.webContents.send(ch, { tabId, ...data })
   if (panelView && !panelView.webContents.isDestroyed()) {
     panelView.webContents.send(ch, { tabId, ...data })
   }
@@ -453,7 +461,10 @@ app.whenReady().then(() => {
   session.defaultSession.webRequest.onBeforeRequest({ urls: ['*://*/*'] }, (details, cb) => {
     const cancel = isBlocked(details.url)
     const tabId  = details.webContentsId ?? 0
-    if (!cancel && tabId > 0 && tabs.has(tabId)) {
+    // Only capture request metadata when the inspector is actually open.
+    // Ad-block (cancel) still runs always. Downstream listeners no-op when a
+    // request isn't recorded in pendingReqs, so this gates the whole chain.
+    if (!cancel && panelVisible && tabId > 0 && tabs.has(tabId)) {
       const startTime = Date.now() / 1000
       pendingReqs.set(details.id, { tabId, startTime })
       pushToRenderer('net:req', tabId, {

@@ -106,6 +106,7 @@ const sleepUrl    = new Map<number, string>()    // tabId → URL to restore on 
 let panelView: WebContentsView | null = null
 let panelH    = 400
 let panelVisible = false
+let htmlFullscreen = false   // a page element (e.g. video) is in HTML fullscreen
 
 // pending webRequest entries: reqId → tabId + startTime
 const pendingReqs = new Map<number, { tabId: number; startTime: number }>()
@@ -115,9 +116,34 @@ function viewBounds() {
   return { x: 0, y: 88, width, height: height - 88 }
 }
 
+// Whole window, chrome included — used while a video is in fullscreen so the
+// tab content covers the tab bar / nav bar entirely.
+function fullBounds() {
+  const { width, height } = win.getContentBounds()
+  return { x: 0, y: 0, width, height }
+}
+
 function panelBounds() {
   const { width, height } = win.getContentBounds()
   return { x: 0, y: height - panelH, width, height: panelH }
+}
+
+// When a page enters HTML fullscreen (video full-screen button), take the OS
+// into fullscreen and expand the active tab over the whole window so the tab
+// bar and nav bar disappear. Restore everything on exit.
+function enterHtmlFullscreen(id: number) {
+  if (id !== activeId) return
+  htmlFullscreen = true
+  if (panelView) panelView.setVisible(false)
+  if (!win.isFullScreen()) win.setFullScreen(true)
+  tabs.get(id)?.setBounds(fullBounds())
+}
+function leaveHtmlFullscreen(id: number) {
+  if (!htmlFullscreen) return
+  htmlFullscreen = false
+  if (win.isFullScreen()) win.setFullScreen(false)
+  tabs.get(id)?.setBounds(viewBounds())
+  if (panelVisible && panelView) { panelView.setVisible(true); panelView.setBounds(panelBounds()) }
 }
 
 function sendToAll(ch: string, data: unknown) {
@@ -335,6 +361,9 @@ function newTab(url = 'about:blank'): number {
       push('favicon', { id, url: favicons[0] })
     }
   })
+  // Video (or any element) going fullscreen → cover the whole window
+  view.webContents.on('enter-html-full-screen', () => enterHtmlFullscreen(id))
+  view.webContents.on('leave-html-full-screen', () => leaveHtmlFullscreen(id))
 
   view.webContents.on('context-menu', (_, params) => {
     const items: MenuItemConstructorOptions[] = []
@@ -604,10 +633,15 @@ app.whenReady().then(() => {
   })
 
   win.loadFile(join(__dirname, '../renderer/index.html'))
-  win.on('resize', () => {
-    if (activeId !== null) tabs.get(activeId)?.setBounds(viewBounds())
-    if (panelVisible && panelView) panelView.setBounds(panelBounds())
-  })
+  const layoutActive = () => {
+    if (activeId !== null) tabs.get(activeId)?.setBounds(htmlFullscreen ? fullBounds() : viewBounds())
+    if (panelVisible && panelView && !htmlFullscreen) panelView.setBounds(panelBounds())
+  }
+  win.on('resize', layoutActive)
+  // The OS fullscreen transition fires resize mid-animation; reassert bounds
+  // when it settles so a fullscreen video covers the chrome cleanly.
+  win.on('enter-full-screen', layoutActive)
+  win.on('leave-full-screen', layoutActive)
 
   // Sleep tabs left idle in the background past the threshold (memory saver).
   setInterval(() => {
@@ -631,6 +665,9 @@ app.whenReady().then(() => {
   ipcMain.handle('tab:close', (_, id: number) => {
     const view = tabs.get(id)
     if (!view) return [...tabs.keys()]
+    // Closing the tab that's in fullscreen would leave the window stuck in OS
+    // fullscreen (its leave event never fires) — bail out of fullscreen first.
+    if (htmlFullscreen && id === activeId) { htmlFullscreen = false; if (win.isFullScreen()) win.setFullScreen(false) }
     win.contentView.removeChildView(view)
     view.webContents.close()
     tabs.delete(id); tabMeta.delete(id)

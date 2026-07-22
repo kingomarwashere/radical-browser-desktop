@@ -18,6 +18,21 @@ function saveBookmarks(bms: Bookmark[]) {
   try { writeFileSync(bookmarksPath(), JSON.stringify(bms, null, 2)) } catch {}
 }
 
+// ── Session restore ───────────────────────────────────────────────────────────
+interface SavedSession { tabs: string[]; activeIndex: number }
+function sessionPath() { return join(app.getPath('userData'), 'session.json') }
+function saveSession(data: SavedSession) {
+  try { writeFileSync(sessionPath(), JSON.stringify(data)) } catch {}
+}
+function loadSession(): SavedSession | null {
+  try {
+    if (!existsSync(sessionPath())) return null
+    const d = JSON.parse(readFileSync(sessionPath(), 'utf8'))
+    if (d && Array.isArray(d.tabs)) return { tabs: d.tabs, activeIndex: d.activeIndex ?? 0 }
+  } catch {}
+  return null
+}
+
 // ── Ad-block list ─────────────────────────────────────────────────────────────
 const BLOCKED_HOSTS = new Set([
   // General
@@ -711,6 +726,12 @@ app.whenReady().then(() => {
     if (panelVisible && panelView) panelView.setBounds(panelBounds())
   })
 
+  // Renderer owns tab display-order + URLs, so it computes the session blob
+  // (debounced) and we just persist it here.
+  ipcMain.on('session:save', (_, data: SavedSession) => {
+    if (data && Array.isArray(data.tabs)) saveSession(data)
+  })
+
   ipcMain.handle('bookmarks:get', () => loadBookmarks())
   ipcMain.handle('bookmarks:toggle', (_, bm: Bookmark) => {
     const bms = loadBookmarks()
@@ -1024,9 +1045,20 @@ app.whenReady().then(() => {
   // Panel is created lazily on first inspector toggle — see panel:toggle above.
 
   win.webContents.once('did-finish-load', () => {
-    const id = newTab()
-    activateTab(id)
-    sendToAll('init', id)
+    const sess = loadSession()
+    const urls = (sess?.tabs ?? []).filter(u => typeof u === 'string' && u.length > 0)
+    if (urls.length === 0) {
+      // Fresh start — single default tab.
+      const id = newTab()
+      activateTab(id)
+      sendToAll('init', id)
+      return
+    }
+    // Restore the previous session, preserving order + which tab was active.
+    const created = urls.map(u => ({ id: newTab(u === 'about:blank' ? 'about:blank' : u), url: u }))
+    const ai = Math.min(Math.max(sess!.activeIndex ?? 0, 0), created.length - 1)
+    activateTab(created[ai].id)
+    win.webContents.send('session:restore', { tabs: created, activeId: created[ai].id })
   })
 })
 

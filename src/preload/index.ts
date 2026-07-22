@@ -16,6 +16,7 @@ contextBridge.exposeInMainWorld('browser', {
   torToggle:       ()                                => ipcRenderer.invoke('tor:toggle'),
   getBookmarks:    ()                                => ipcRenderer.invoke('bookmarks:get'),
   toggleBookmark:  (bm: object)                      => ipcRenderer.invoke('bookmarks:toggle', bm),
+  saveSession:     (data: object)                    => ipcRenderer.send('session:save', data),
   getResponseBody: (tabId: number, reqId: string)    => ipcRenderer.invoke('net:body', { tabId, reqId }),
   getCookies:      (tabId: number)                   => ipcRenderer.invoke('net:cookies', tabId),
   replay:          (opts: object)                    => ipcRenderer.invoke('net:replay', opts),

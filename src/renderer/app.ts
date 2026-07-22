@@ -12,6 +12,7 @@ declare const browser: {
   togglePanel:     ()                        => Promise<{ open: boolean }>
   torStatus:       ()                        => Promise<{ installed: boolean; state: string; progress: number }>
   torToggle:       ()                        => Promise<{ installed: boolean; state: string; progress: number }>
+  saveSession:     (data: object)           => void
   getBookmarks:    ()                        => Promise<{ url: string; title: string; favicon?: string }[]>
   toggleBookmark:  (bm: object)             => Promise<{ url: string; title: string; favicon?: string }[]>
   on:              (ch: string, fn: (...a: unknown[]) => void) => void
@@ -40,6 +41,24 @@ function placeTab(id: number) {
   const i = active !== null ? order.indexOf(active) : -1
   if (i >= 0) order.splice(i + 1, 0, id)
   else order.push(id)
+}
+
+// Persist the open tabs (URLs, order, active) so a restart restores them.
+// Debounced — bursts of nav/open/close events collapse into one write.
+let restoring = false
+let sessionTimer: ReturnType<typeof setTimeout> | undefined
+function persistSession() {
+  if (restoring) return
+  clearTimeout(sessionTimer)
+  sessionTimer = setTimeout(() => {
+    const ids = order.filter(id => tabs.has(id))
+    const urls = ids.map(id => {
+      const u = tabs.get(id)!.url
+      return u && u !== 'about:blank' ? u : 'about:blank'
+    })
+    const activeIndex = active !== null ? Math.max(0, ids.indexOf(active)) : 0
+    browser.saveSession({ tabs: urls, activeIndex })
+  }, 500)
 }
 
 // ── Bookmark state ────────────────────────────────────────────────────────
@@ -154,7 +173,7 @@ async function closeTab(id: number) {
     tabs.set(newId, { id: newId, title: 'New Tab', url: '', loading: true })
     active = newId
   }
-  syncURLBar(); renderTabs()
+  syncURLBar(); renderTabs(); persistSession()
 }
 
 // ── Panel toggle ──────────────────────────────────────────────────────────
@@ -175,13 +194,28 @@ browser.on('init', (id: unknown) => {
   tabs.set(tabId, { id: tabId, title: 'New Tab', url: 'https://search.theradicalparty.com', loading: true })
   active = tabId; renderTabs()
 })
+// Rebuild the tab strip from a saved session (order + active preserved).
+browser.on('session:restore', (data: unknown) => {
+  const { tabs: list, activeId } = data as { tabs: { id: number; url: string }[]; activeId: number }
+  restoring = true
+  tabs.clear(); order.length = 0
+  list.forEach(t => {
+    tabs.set(t.id, { id: t.id, title: '', url: t.url === 'about:blank' ? '' : t.url, loading: true })
+    order.push(t.id)
+  })
+  active = activeId
+  syncURLBar(); renderTabs(); updateBookmarkBtn()
+  restoring = false
+  persistSession()
+})
 browser.on('activated', (id: unknown) => {
-  active = id as number; syncURLBar(); renderTabs(); updateBookmarkBtn()
+  active = id as number; syncURLBar(); renderTabs(); updateBookmarkBtn(); persistSession()
 })
 browser.on('nav', (data: unknown) => {
   const { id, url } = data as { id: number; url: string }
   const tab = tabs.get(id); if (!tab) return
   tab.url = url; if (id === active) { syncURLBar(); updateBookmarkBtn() }
+  persistSession()
 })
 browser.on('nav-state', (data: unknown) => {
   const { id, canGoBack, canGoForward } = data as { id: number; canGoBack: boolean; canGoForward: boolean }
@@ -240,7 +274,7 @@ browser.on('tab:opened', (id: unknown) => {
   const tabId = id as number
   tabs.set(tabId, { id: tabId, title: 'New Tab', url: '', loading: true })
   placeTab(tabId)   // insert right after the tab that was active when ⌘T fired
-  active = tabId; renderTabs()
+  active = tabId; renderTabs(); persistSession()
   setTimeout(() => { urlBar.focus(); urlBar.select() }, 60)
 })
 

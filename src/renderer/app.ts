@@ -38,6 +38,11 @@ let prevActive: number | null = null
 // Explicit display order of tab ids (Map insertion order would always append).
 const order: number[] = []
 
+// ── Tab drag-to-reorder state ───────────────────────────────────────────────
+let dragId: number | null = null      // tab being dragged (null = not dragging)
+let dragStartX = 0
+let dragging = false                   // true once past the movement threshold
+
 // Place a newly-opened tab right after the tab you were on, so ⌘T opens next
 // to the current tab rather than at the far end of the bar.
 function placeTab(id: number) {
@@ -108,18 +113,49 @@ function makeTabEl(id: number): HTMLElement {
   el.dataset.id = String(id)
   const fav = document.createElement('img')
   fav.className = 'tab-favicon hidden'
+  fav.draggable = false   // stop the browser's native image-drag hijacking a tab drag
   const title = document.createElement('span')
   title.className = 'tab-title'
   const close = document.createElement('span')
   close.className = 'tab-close'; close.textContent = '×'
   close.addEventListener('mousedown', e => { e.stopPropagation(); closeTab(id) })
   el.append(fav, title, close)
-  el.addEventListener('mousedown', () => { if (id !== active) activateTab(id) })
+  el.addEventListener('mousedown', e => {
+    if ((e as MouseEvent).button !== 0) return   // left button only
+    if (id !== active) activateTab(id)
+    dragId = id; dragStartX = (e as MouseEvent).clientX; dragging = false
+  })
   // Right-click → keep-awake / sleep-now menu (native, built in main)
   el.addEventListener('contextmenu', e => { e.preventDefault(); browser.tabMenu(id) })
   tabEls.set(id, el)
   return el
 }
+
+// Drag a tab left/right to reorder it. On move past a small threshold we relocate
+// the dragged id within `order` based on cursor position, then re-render.
+document.addEventListener('mousemove', e => {
+  if (dragId === null) return
+  if (!dragging) {
+    if (Math.abs(e.clientX - dragStartX) < 5) return   // treat tiny moves as a click
+    dragging = true
+    document.body.style.userSelect = 'none'
+  }
+  const cur = order.filter(x => tabs.has(x))
+  const others = cur.filter(x => x !== dragId)
+  let insertIdx = others.length
+  for (let i = 0; i < others.length; i++) {
+    const r = tabEls.get(others[i])?.getBoundingClientRect()
+    if (r && e.clientX < r.left + r.width / 2) { insertIdx = i; break }
+  }
+  const next = [...others]; next.splice(insertIdx, 0, dragId)
+  if (next.join(',') !== cur.join(',')) { order.length = 0; order.push(...next); renderTabs() }
+})
+document.addEventListener('mouseup', () => {
+  if (dragId !== null && dragging) persistSession()   // remember the new order
+  if (dragId !== null) tabEls.get(dragId)?.classList.remove('dragging')
+  dragId = null; dragging = false
+  document.body.style.userSelect = ''
+})
 
 function renderTabs() {
   const newBtn = $('btn-new-tab')
@@ -134,7 +170,7 @@ function renderTabs() {
   order.forEach(id => {
     const tab = tabs.get(id)!
     const el = tabEls.get(tab.id) ?? makeTabEl(tab.id)
-    const activeCls = `tab${tab.id === active ? ' active' : ''}${tab.sleeping ? ' sleeping' : ''}`
+    const activeCls = `tab${tab.id === active ? ' active' : ''}${tab.sleeping ? ' sleeping' : ''}${tab.id === dragId && dragging ? ' dragging' : ''}`
     if (el.className !== activeCls) el.className = activeCls
     // Slept tabs dim; keep the pointer affordance out of the way
     const wantOpacity = tab.sleeping ? '0.5' : ''

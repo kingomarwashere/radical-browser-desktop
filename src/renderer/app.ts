@@ -13,12 +13,16 @@ declare const browser: {
   torStatus:       ()                        => Promise<{ installed: boolean; state: string; progress: number }>
   torToggle:       ()                        => Promise<{ installed: boolean; state: string; progress: number }>
   saveSession:     (data: object)           => void
+  omniQuery:       (text: string, left: number, width: number) => Promise<Suggestion[]>
+  omniSelect:      (sel: number)             => Promise<void>
+  omniHide:        ()                        => Promise<void>
   getBookmarks:    ()                        => Promise<{ url: string; title: string; favicon?: string }[]>
   toggleBookmark:  (bm: object)             => Promise<{ url: string; title: string; favicon?: string }[]>
   on:              (ch: string, fn: (...a: unknown[]) => void) => void
 }
 
 interface Tab { id: number; title: string; url: string; favicon?: string; loading: boolean; sleeping?: boolean; keepAwake?: boolean }
+interface Suggestion { url: string; title: string; bookmark: boolean }
 
 // ── DOM refs ──────────────────────────────────────────────────────────────
 const $ = (id: string) => document.getElementById(id)!
@@ -334,13 +338,64 @@ async function handleKey(key: string) {
   }
 }
 
-// ── UI events ─────────────────────────────────────────────────────────────
+// ── URL autocomplete (omnibox) ──────────────────────────────────────────────
+let suggestions: Suggestion[] = []
+let selIndex = -1          // -1 = the user's own typed text
+let typedText = ''         // what the user actually typed (restored on ↑ past top / Esc)
+let omniTimer: ReturnType<typeof setTimeout> | undefined
+
+function closeOmnibox() {
+  suggestions = []; selIndex = -1
+  browser.omniHide()
+}
+function queryOmnibox() {
+  const text = urlBar.value
+  typedText = text
+  if (!text.trim()) { closeOmnibox(); return }
+  const r = urlBar.getBoundingClientRect()
+  browser.omniQuery(text, r.left, r.width).then(items => {
+    // Ignore stale responses if the field changed while we waited
+    if (urlBar.value !== text) return
+    suggestions = items; selIndex = -1
+  })
+}
+function moveSel(delta: number) {
+  if (suggestions.length === 0) return
+  selIndex = Math.max(-1, Math.min(suggestions.length - 1, selIndex + delta))
+  urlBar.value = selIndex >= 0 ? suggestions[selIndex].url : typedText
+  urlBar.setSelectionRange(urlBar.value.length, urlBar.value.length)
+  browser.omniSelect(selIndex)
+}
+
 $('btn-new-tab').addEventListener('click', () => browser.newTab())
+
+urlBar.addEventListener('input', () => {
+  clearTimeout(omniTimer)
+  omniTimer = setTimeout(queryOmnibox, 60)
+})
 urlBar.addEventListener('keydown', async e => {
-  if (e.key !== 'Enter' || active === null) return
-  await browser.go(active, toURL(urlBar.value))
+  const ev = e as KeyboardEvent
+  if (ev.key === 'ArrowDown') { ev.preventDefault(); moveSel(1); return }
+  if (ev.key === 'ArrowUp')   { ev.preventDefault(); moveSel(-1); return }
+  if (ev.key === 'Escape')    { urlBar.value = typedText; closeOmnibox(); return }
+  if (ev.key === 'Enter') {
+    if (active === null) return
+    const target = selIndex >= 0 ? suggestions[selIndex].url : toURL(urlBar.value)
+    closeOmnibox()
+    await browser.go(active, target)
+    urlBar.blur()
+  }
 })
 urlBar.addEventListener('focus', () => urlBar.select())
+// Delay so a mousedown-pick inside the dropdown lands before we hide it
+urlBar.addEventListener('blur', () => setTimeout(closeOmnibox, 150))
+// Click on a suggestion in the dropdown overlay
+browser.on('omni:pick', (u: unknown) => {
+  if (active === null) return
+  const url = u as string
+  urlBar.value = url; closeOmnibox()
+  browser.go(active, url)
+})
 btnBack.addEventListener('click',  () => active !== null && browser.back(active))
 btnFwd.addEventListener('click',   () => active !== null && browser.forward(active))
 btnRld.addEventListener('click',   e => {

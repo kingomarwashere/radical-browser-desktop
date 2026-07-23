@@ -33,6 +33,74 @@ function loadSession(): SavedSession | null {
   return null
 }
 
+// ── History (for URL autocomplete) ────────────────────────────────────────────
+// WebContentsView tabs aren't tracked by Chromium's history service, so we keep
+// our own lightweight visited-URL store to power address-bar autocomplete.
+interface HistEntry { url: string; title: string; visits: number; last: number }
+const history = new Map<string, HistEntry>()
+function historyPath() { return join(app.getPath('userData'), 'history.json') }
+function loadHistory() {
+  try {
+    if (!existsSync(historyPath())) return
+    const arr = JSON.parse(readFileSync(historyPath(), 'utf8'))
+    if (Array.isArray(arr)) for (const e of arr) if (e?.url) history.set(e.url, e)
+  } catch {}
+}
+let histTimer: ReturnType<typeof setTimeout> | undefined
+function saveHistory() {
+  clearTimeout(histTimer)
+  histTimer = setTimeout(() => {
+    // Prune to the 4000 most frecent entries before writing.
+    let entries = [...history.values()]
+    if (entries.length > 4000) {
+      entries.sort((a, b) => frecency(b) - frecency(a))
+      entries = entries.slice(0, 4000)
+      history.clear(); for (const e of entries) history.set(e.url, e)
+    }
+    try { writeFileSync(historyPath(), JSON.stringify(entries)) } catch {}
+  }, 2000)
+}
+function frecency(e: HistEntry) {
+  const ageDays = (Date.now() - e.last) / 86400000
+  return e.visits * (0.3 + 1 / (1 + ageDays))   // visits weighted by recency
+}
+function recordVisit(url: string, title = '') {
+  if (!/^https?:\/\//i.test(url)) return         // real pages only
+  const e = history.get(url)
+  if (e) { e.visits++; e.last = Date.now(); if (title) e.title = title }
+  else history.set(url, { url, title, visits: 1, last: Date.now() })
+  saveHistory()
+}
+function updateHistTitle(url: string, title: string) {
+  const e = history.get(url)
+  if (e && title && e.title !== title) { e.title = title; saveHistory() }
+}
+function omniboxSuggest(raw: string): { url: string; title: string; bookmark: boolean }[] {
+  const q = raw.trim().toLowerCase()
+  if (!q) return []
+  const bmarks = loadBookmarks()
+  const bmSet = new Set(bmarks.map(b => b.url))
+  const match = (url: string, title: string) => {
+    const u = url.toLowerCase(), t = (title || '').toLowerCase()
+    const host = u.replace(/^https?:\/\/(www\.)?/, '')
+    return { hit: u.includes(q) || t.includes(q), prefix: host.startsWith(q) || u.startsWith(q) }
+  }
+  const scored = new Map<string, { url: string; title: string; bookmark: boolean; score: number }>()
+  for (const e of history.values()) {
+    const m = match(e.url, e.title)
+    if (!m.hit) continue
+    scored.set(e.url, { url: e.url, title: e.title, bookmark: bmSet.has(e.url), score: frecency(e) + (m.prefix ? 1000 : 0) })
+  }
+  for (const b of bmarks) {
+    const m = match(b.url, b.title)
+    if (!m.hit) continue
+    const ex = scored.get(b.url)
+    scored.set(b.url, { url: b.url, title: b.title || ex?.title || '', bookmark: true, score: (ex?.score ?? 0) + 500 + (m.prefix ? 1000 : 0) })
+  }
+  return [...scored.values()].sort((a, b) => b.score - a.score).slice(0, 8)
+    .map(s => ({ url: s.url, title: s.title, bookmark: s.bookmark }))
+}
+
 // ── Ad-block list ─────────────────────────────────────────────────────────────
 const BLOCKED_HOSTS = new Set([
   // General
@@ -107,6 +175,7 @@ let panelView: WebContentsView | null = null
 let panelH    = 400
 let panelVisible = false
 let htmlFullscreen = false   // a page element (e.g. video) is in HTML fullscreen
+let omniboxView: WebContentsView | null = null   // address-bar autocomplete dropdown
 
 // pending webRequest entries: reqId → tabId + startTime
 const pendingReqs = new Map<number, { tabId: number; startTime: number }>()
@@ -144,6 +213,32 @@ function leaveHtmlFullscreen(id: number) {
   if (win.isFullScreen()) win.setFullScreen(false)
   tabs.get(id)?.setBounds(viewBounds())
   if (panelVisible && panelView) { panelView.setVisible(true); panelView.setBounds(panelBounds()) }
+}
+
+// ── Omnibox (URL autocomplete) dropdown overlay ───────────────────────────────
+const CHROME_H = 88   // tab bar (40) + nav bar (48); dropdown hangs below this
+function createOmniboxView() {
+  omniboxView = new WebContentsView({
+    webPreferences: {
+      preload: join(__dirname, '../preload/omnibox.js'),
+      contextIsolation: true, nodeIntegration: false,
+    },
+  })
+  omniboxView.setBackgroundColor('#00000000')
+  win.contentView.addChildView(omniboxView)
+  omniboxView.setVisible(false)
+  omniboxView.webContents.loadFile(join(__dirname, '../renderer/omnibox.html'))
+}
+function showOmnibox(left: number, width: number, items: unknown[], sel: number) {
+  if (!omniboxView) createOmniboxView()
+  win.contentView.addChildView(omniboxView!)   // keep above the tab content
+  const rows = Math.min(items.length, 8)
+  omniboxView!.setBounds({ x: Math.round(left), y: CHROME_H, width: Math.round(width), height: rows * 34 })
+  omniboxView!.setVisible(true)
+  omniboxView!.webContents.send('omni:items', { items, sel })
+}
+function hideOmnibox() {
+  if (omniboxView) omniboxView.setVisible(false)
 }
 
 function sendToAll(ch: string, data: unknown) {
@@ -337,6 +432,7 @@ function newTab(url = 'about:blank'): number {
   const pushNav = (u: string) => {
     if (sleepingIds.has(id)) return   // ignore the about:blank sleep navigation
     tabMeta.set(id, { ...tabMeta.get(id)!, url: u })
+    recordVisit(u, tabMeta.get(id)!.title)   // feed URL autocomplete history
     push('nav', { id, url: u })
     push('nav-state', {
       id,
@@ -350,6 +446,7 @@ function newTab(url = 'about:blank'): number {
   view.webContents.on('page-title-updated',   (_, title) => {
     if (sleepingIds.has(id)) return   // keep the pre-sleep title in the tab bar
     tabMeta.set(id, { ...tabMeta.get(id)!, title })
+    updateHistTitle(tabMeta.get(id)!.url, title)
     push('title', { id, title })
   })
   view.webContents.on('did-start-loading', () => { if (!sleepingIds.has(id)) push('loading', { id, v: true }) })
@@ -539,6 +636,7 @@ function buildMenu() {
 // ── App ready ─────────────────────────────────────────────────────────────────
 app.whenReady().then(() => {
   buildMenu()
+  loadHistory()
 
   // ── Network monitoring via webRequest (no CDP required) ───────────────────
   // Single onBeforeRequest handler: ad-block + capture requests
@@ -767,6 +865,21 @@ app.whenReady().then(() => {
   // (debounced) and we just persist it here.
   ipcMain.on('session:save', (_, data: SavedSession) => {
     if (data && Array.isArray(data.tabs)) saveSession(data)
+  })
+
+  // ── URL autocomplete (omnibox) ─────────────────────────────────────────────
+  ipcMain.handle('omni:query', (_, { text, left, width }: { text: string; left: number; width: number }) => {
+    const items = omniboxSuggest(text)
+    if (items.length === 0) hideOmnibox()
+    else showOmnibox(left, width, items, -1)
+    return items
+  })
+  ipcMain.handle('omni:select', (_, sel: number) => { omniboxView?.webContents.send('omni:sel', sel) })
+  ipcMain.handle('omni:hide', () => hideOmnibox())
+  // Click inside the dropdown → tell the chrome to navigate there.
+  ipcMain.on('omni:pick', (_, url: string) => {
+    hideOmnibox()
+    if (!win.isDestroyed()) win.webContents.send('omni:pick', url)
   })
 
   ipcMain.handle('bookmarks:get', () => loadBookmarks())

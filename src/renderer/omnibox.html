@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <style>
+    *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body {
+      background: transparent;
+      font: 13px/1 -apple-system, BlinkMacSystemFont, 'SF Pro Text', system-ui, sans-serif;
+      user-select: none; -webkit-user-select: none; overflow: hidden;
+    }
+    #list {
+      background: #161616;
+      border: 1px solid #2a2a2a; border-top: none;
+      border-radius: 0 0 8px 8px;
+      overflow: hidden;
+    }
+    .row {
+      display: flex; align-items: center; gap: 10px;
+      height: 34px; padding: 0 12px;
+      color: #999; cursor: default; white-space: nowrap;
+    }
+    .row.sel { background: #222; color: #e2e2e2; }
+    .row:hover { background: #1e1e1e; }
+    .ico { width: 16px; text-align: center; font-size: 11px; flex-shrink: 0; color: #666; }
+    .row.sel .ico { color: #4f8ef7; }
+    .u { color: #e2e2e2; flex-shrink: 0; max-width: 55%; overflow: hidden; text-overflow: ellipsis; }
+    .t { color: #666; flex: 1; overflow: hidden; text-overflow: ellipsis; }
+    .row.sel .t { color: #999; }
+  </style>
+</head>
+<body>
+  <div id="list"></div>
+  <script src="./omnibox.js"></script>
+</body>
+</html>

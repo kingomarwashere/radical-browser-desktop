@@ -4,7 +4,7 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs'
 import * as dns from 'node:dns/promises'
 import * as net from 'node:net'
 import * as tls from 'node:tls'
-import { spawn, execFile } from 'node:child_process'
+import { spawn, execFile, execFileSync } from 'node:child_process'
 import { homedir } from 'node:os'
 
 // ── Bookmarks ─────────────────────────────────────────────────────────────────
@@ -156,6 +156,9 @@ function normType(t: string): string {
 interface TabMeta { title: string; url: string; favicon?: string }
 let win: BrowserWindow
 let paletteWin: BrowserWindow | null = null
+let authWin: BrowserWindow | null = null   // HTTP auth (Basic/Digest/proxy) prompt
+type AuthReq = { authInfo: { host: string; realm: string; isProxy: boolean }; cb: (u?: string, p?: string) => void }
+const authQueue: AuthReq[] = []
 const tabs    = new Map<number, WebContentsView>()
 const tabMeta = new Map<number, TabMeta>()
 let activeId: number | null = null
@@ -249,6 +252,43 @@ function showOmnibox(left: number, width: number, items: unknown[], sel: number)
 function hideOmnibox() {
   if (omniboxView) omniboxView.setVisible(false)
 }
+
+// ── HTTP authentication prompt (Basic / Digest / proxy) ───────────────────────
+// Without an 'app login' handler Electron silently cancels auth challenges, so
+// password-protected pages just fail. Show a modal credential dialog instead.
+let currentAuthFinish: ((u?: string, p?: string) => void) | null = null
+function showNextAuth() {
+  const req = authQueue[0]
+  if (!req || authWin) return
+  let handled = false
+  currentAuthFinish = (u, p) => {
+    if (handled) return
+    handled = true
+    authQueue.shift()
+    currentAuthFinish = null
+    req.cb(u, p)                              // empty () = cancel the challenge
+    const w = authWin; authWin = null
+    if (w && !w.isDestroyed()) w.destroy()
+    showNextAuth()                            // serve the next queued challenge
+  }
+  authWin = new BrowserWindow({
+    width: 380, height: 240, resizable: false, frame: false, transparent: true,
+    parent: win, modal: true, show: false,
+    webPreferences: {
+      preload: join(__dirname, '../preload/auth.js'),
+      contextIsolation: true, nodeIntegration: false,
+    },
+  })
+  const w = authWin
+  w.loadFile(join(__dirname, '../renderer/auth.html'))
+  w.webContents.once('did-finish-load', () => { w.webContents.send('auth:info', req.authInfo); w.show() })
+  w.on('closed', () => { authWin = null; currentAuthFinish?.() })   // dismissed = cancel
+}
+app.on('login', (event, _wc, _details, authInfo, callback) => {
+  event.preventDefault()   // take over — otherwise Electron cancels silently
+  authQueue.push({ authInfo: { host: authInfo.host, realm: authInfo.realm, isProxy: authInfo.isProxy }, cb: callback })
+  if (!authWin) showNextAuth()
+})
 
 function sendToAll(ch: string, data: unknown) {
   if (!win || win.isDestroyed() || win.webContents.isDestroyed()) return
@@ -421,7 +461,13 @@ function interceptShortcuts(view: WebContentsView) {
 // ── Tab lifecycle ─────────────────────────────────────────────────────────────
 function newTab(url = 'about:blank'): number {
   const view = new WebContentsView({
-    webPreferences: { contextIsolation: true, nodeIntegration: false },
+    webPreferences: {
+      // contextIsolation off + a minimal preload so window.prompt (which Electron
+      // doesn't implement) can be provided before page scripts run. nodeIntegration
+      // stays off and the preload exposes nothing to the page but the prompt override.
+      preload: join(__dirname, '../preload/tab.js'),
+      contextIsolation: false, nodeIntegration: false, sandbox: false,
+    },
   })
   win.contentView.addChildView(view)
   // Re-add panelView to keep it on top of the z-order
@@ -885,6 +931,24 @@ app.whenReady().then(() => {
   })
   ipcMain.handle('omni:select', (_, sel: number) => { omniboxView?.webContents.send('omni:sel', sel) })
   ipcMain.handle('omni:hide', () => hideOmnibox())
+
+  // HTTP auth prompt result
+  ipcMain.on('auth:submit', (_, { username, password }: { username: string; password: string }) => currentAuthFinish?.(username, password))
+  ipcMain.on('auth:cancel', () => currentAuthFinish?.())
+
+  // window.prompt() backing — synchronous native dialog (Electron has no prompt).
+  ipcMain.on('window-prompt', (event, { message, defaultValue }: { message: string; defaultValue: string }) => {
+    const script = `on run argv
+  set r to display dialog (item 1 of argv) default answer (item 2 of argv) buttons {"Cancel", "OK"} default button "OK" with title "Radical Browser"
+  return text returned of r
+end run`
+    try {
+      const out = execFileSync('osascript', ['-e', script, message || ' ', defaultValue || ''], { encoding: 'utf8', timeout: 120000 })
+      event.returnValue = out.replace(/\n$/, '')
+    } catch {
+      event.returnValue = null   // user cancelled (or dialog error)
+    }
+  })
   // Click inside the dropdown → tell the chrome to navigate there.
   ipcMain.on('omni:pick', (_, url: string) => {
     hideOmnibox()

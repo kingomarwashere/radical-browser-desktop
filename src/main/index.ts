@@ -217,6 +217,8 @@ function leaveHtmlFullscreen(id: number) {
 
 // ── Omnibox (URL autocomplete) dropdown overlay ───────────────────────────────
 const CHROME_H = 88   // tab bar (40) + nav bar (48); dropdown hangs below this
+let omniReady = false
+let omniPending: { items: unknown[]; sel: number } | null = null
 function createOmniboxView() {
   omniboxView = new WebContentsView({
     webPreferences: {
@@ -227,6 +229,12 @@ function createOmniboxView() {
   omniboxView.setBackgroundColor('#00000000')
   win.contentView.addChildView(omniboxView)
   omniboxView.setVisible(false)
+  // Flush the latest items once the overlay's script is ready (avoids dropping
+  // the first send that arrives before load finishes).
+  omniboxView.webContents.once('did-finish-load', () => {
+    omniReady = true
+    if (omniPending) { omniboxView!.webContents.send('omni:items', omniPending); omniPending = null }
+  })
   omniboxView.webContents.loadFile(join(__dirname, '../renderer/omnibox.html'))
 }
 function showOmnibox(left: number, width: number, items: unknown[], sel: number) {
@@ -235,7 +243,8 @@ function showOmnibox(left: number, width: number, items: unknown[], sel: number)
   const rows = Math.min(items.length, 8)
   omniboxView!.setBounds({ x: Math.round(left), y: CHROME_H, width: Math.round(width), height: rows * 34 })
   omniboxView!.setVisible(true)
-  omniboxView!.webContents.send('omni:items', { items, sel })
+  if (omniReady) omniboxView!.webContents.send('omni:items', { items, sel })
+  else omniPending = { items, sel }
 }
 function hideOmnibox() {
   if (omniboxView) omniboxView.setVisible(false)

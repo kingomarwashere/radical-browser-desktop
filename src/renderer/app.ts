@@ -342,11 +342,36 @@ async function handleKey(key: string) {
 let suggestions: Suggestion[] = []
 let selIndex = -1          // -1 = the user's own typed text
 let typedText = ''         // what the user actually typed (restored on ↑ past top / Esc)
+let autofillUrl: string | null = null   // URL of the inline-autofilled top match
+let lastInputWasDelete = false
+let caretAtEnd = true
 let omniTimer: ReturnType<typeof setTimeout> | undefined
 
 function closeOmnibox() {
-  suggestions = []; selIndex = -1
+  suggestions = []; selIndex = -1; autofillUrl = null
   browser.omniHide()
+}
+// Chrome-style inline autofill: if the top suggestion's URL begins with what
+// the user typed, fill the rest into the bar with the appended part selected.
+function applyInlineAutofill() {
+  autofillUrl = null
+  const typed = typedText
+  if (!typed || typed.includes(' ')) return          // don't complete searches
+  for (const s of suggestions) {
+    const forms = [
+      s.url.replace(/^https?:\/\/(www\.)?/, '').replace(/\/$/, ''),  // github.com
+      s.url.replace(/^https?:\/\//, '').replace(/\/$/, ''),          // www.github.com
+      s.url,                                                          // https://github.com/
+    ]
+    for (const form of forms) {
+      if (form.toLowerCase().startsWith(typed.toLowerCase()) && form.length > typed.length) {
+        autofillUrl = s.url
+        urlBar.value = typed + form.slice(typed.length)   // keep the user's typed case
+        urlBar.setSelectionRange(typed.length, urlBar.value.length)
+        return
+      }
+    }
+  }
 }
 function queryOmnibox() {
   const text = urlBar.value
@@ -356,10 +381,12 @@ function queryOmnibox() {
   browser.omniQuery(text, r.left, r.width).then(items => {
     // Ignore stale responses if the field changed while we waited
     if (urlBar.value !== text) return
-    suggestions = items; selIndex = -1
+    suggestions = items; selIndex = -1; autofillUrl = null
+    if (!lastInputWasDelete && caretAtEnd) applyInlineAutofill()
   })
 }
 function moveSel(delta: number) {
+  autofillUrl = null                                   // explicit nav supersedes autofill
   if (suggestions.length === 0) return
   selIndex = Math.max(-1, Math.min(suggestions.length - 1, selIndex + delta))
   urlBar.value = selIndex >= 0 ? suggestions[selIndex].url : typedText
@@ -369,7 +396,9 @@ function moveSel(delta: number) {
 
 $('btn-new-tab').addEventListener('click', () => browser.newTab())
 
-urlBar.addEventListener('input', () => {
+urlBar.addEventListener('input', e => {
+  lastInputWasDelete = ((e as InputEvent).inputType || '').startsWith('delete')
+  caretAtEnd = urlBar.selectionStart === urlBar.value.length
   clearTimeout(omniTimer)
   omniTimer = setTimeout(queryOmnibox, 60)
 })
@@ -380,7 +409,7 @@ urlBar.addEventListener('keydown', async e => {
   if (ev.key === 'Escape')    { urlBar.value = typedText; closeOmnibox(); return }
   if (ev.key === 'Enter') {
     if (active === null) return
-    const target = selIndex >= 0 ? suggestions[selIndex].url : toURL(urlBar.value)
+    const target = selIndex >= 0 ? suggestions[selIndex].url : (autofillUrl ?? toURL(urlBar.value))
     closeOmnibox()
     await browser.go(active, target)
     urlBar.blur()

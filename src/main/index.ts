@@ -169,10 +169,11 @@ let activeId: number | null = null
 // the real URL to restore on wake. The webContents (and thus the tab id) stays
 // stable, so nothing downstream breaks. Never sleeps the active tab, a tab the
 // user pinned awake, or a tab playing audio.
-const SLEEP_AFTER_MS = 30 * 60 * 1000            // 30 min idle → sleep
+const SLEEP_AFTER_MS = 10 * 60 * 1000            // 10 min idle → sleep
+const MAX_WARM_BG    = 4                          // keep at most N background tabs loaded (LRU)
 const lastActive  = new Map<number, number>()    // tabId → ms it last went inactive
 const keepAwake   = new Set<number>()            // tabs the user pinned awake
-const sleepingIds = new Set<number>()            // tabs currently slept (on about:blank)
+const sleepingIds = new Set<number>()            // tabs currently slept (process freed)
 const sleepUrl    = new Map<number, string>()    // tabId → URL to restore on wake
 let panelView: WebContentsView | null = null
 let panelH    = 400
@@ -612,7 +613,11 @@ function sleepTab(id: number, force = false) {
   if (view.webContents.isCurrentlyAudible()) return   // never sleep audible tabs
   sleepUrl.set(id, url)
   sleepingIds.add(id)
-  view.webContents.loadURL('about:blank').catch(() => {})
+  // Free the ENTIRE renderer process (not just the page) — the tab's webContents
+  // id stays stable and loadURL respawns it on wake. Waking already reloads, so
+  // this is free memory with no extra wake cost. Falls back to blanking the page.
+  try { (view.webContents as unknown as { forcefullyCrashRenderer: () => void }).forcefullyCrashRenderer() }
+  catch { view.webContents.loadURL('about:blank').catch(() => {}) }
   if (!win.isDestroyed()) win.webContents.send('tab:sleep', { id })
 }
 
@@ -622,6 +627,26 @@ function wakeTab(id: number) {
   sleepingIds.delete(id); sleepUrl.delete(id)
   if (url) tabs.get(id)?.webContents.loadURL(url).catch(() => {})
   if (!win.isDestroyed()) win.webContents.send('tab:wake', { id })
+}
+
+// Keep memory flat regardless of tab count: only the active tab + the N most
+// recently used background tabs stay loaded; the rest are slept (LRU).
+function enforceWarmCap() {
+  const warm = [...tabs.keys()].filter(id => id !== activeId && !sleepingIds.has(id) && !keepAwake.has(id))
+  if (warm.length <= MAX_WARM_BG) return
+  warm.sort((a, b) => (lastActive.get(a) ?? 0) - (lastActive.get(b) ?? 0))   // least-recent first
+  for (const id of warm.slice(0, warm.length - MAX_WARM_BG)) sleepTab(id)
+}
+
+// Create a tab that starts slept — never loads its URL until first activated.
+// Used for session restore so reopening 30 tabs doesn't load 30 pages at once.
+function newTabSlept(url: string): number {
+  const id = newTab('about:blank')
+  tabMeta.set(id, { ...tabMeta.get(id)!, url })
+  sleepingIds.add(id); sleepUrl.set(id, url)
+  try { (tabs.get(id)!.webContents as unknown as { forcefullyCrashRenderer: () => void }).forcefullyCrashRenderer() } catch {}
+  if (!win.isDestroyed()) win.webContents.send('tab:sleep', { id })
+  return id
 }
 
 function activateTab(id: number, focusURL = false) {
@@ -634,6 +659,7 @@ function activateTab(id: number, focusURL = false) {
   view.setBounds(viewBounds())
   activeId = id
   lastActive.set(id, Date.now())
+  enforceWarmCap()                 // sleep least-recently-used background tabs beyond the cap
   sendToAll('activated', id)
   win.webContents.send('nav-state', {
     id,
@@ -1278,8 +1304,13 @@ end run`
       return
     }
     // Restore the previous session, preserving order + which tab was active.
-    const created = urls.map(u => ({ id: newTab(u === 'about:blank' ? 'about:blank' : u), url: u }))
-    const ai = Math.min(Math.max(sess!.activeIndex ?? 0, 0), created.length - 1)
+    // Only the active tab loads now; the rest start slept and load when opened.
+    const ai = Math.min(Math.max(sess!.activeIndex ?? 0, 0), urls.length - 1)
+    const created = urls.map((u, i) => {
+      const slept = i !== ai && u !== 'about:blank'
+      const id = slept ? newTabSlept(u) : newTab(u === 'about:blank' ? 'about:blank' : u)
+      return { id, url: u, slept }
+    })
     activateTab(created[ai].id)
     win.webContents.send('session:restore', { tabs: created, activeId: created[ai].id })
   })

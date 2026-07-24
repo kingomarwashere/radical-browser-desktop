@@ -241,11 +241,11 @@ browser.on('init', (id: unknown) => {
 })
 // Rebuild the tab strip from a saved session (order + active preserved).
 browser.on('session:restore', (data: unknown) => {
-  const { tabs: list, activeId } = data as { tabs: { id: number; url: string }[]; activeId: number }
+  const { tabs: list, activeId } = data as { tabs: { id: number; url: string; slept?: boolean }[]; activeId: number }
   restoring = true
   tabs.clear(); order.length = 0
   list.forEach(t => {
-    tabs.set(t.id, { id: t.id, title: '', url: t.url === 'about:blank' ? '' : t.url, loading: true })
+    tabs.set(t.id, { id: t.id, title: '', url: t.url === 'about:blank' ? '' : t.url, loading: !t.slept, sleeping: !!t.slept })
     order.push(t.id)
   })
   active = activeId

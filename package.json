@@ -50,7 +50,9 @@
       "buildResources": "assets"
     }
   },
-  "dependencies": {},
+  "dependencies": {
+    "@ghostery/adblocker": "^2.18.1"
+  },
   "devDependencies": {
     "@types/node": "^22.0.0",
     "electron": "^35.0.0",

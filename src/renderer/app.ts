@@ -16,6 +16,8 @@ declare const browser: {
   omniQuery:       (text: string, left: number, width: number) => Promise<Suggestion[]>
   omniSelect:      (sel: number)             => Promise<void>
   omniHide:        ()                        => Promise<void>
+  adblockStatus:   (tabId?: number)          => Promise<{ domain: string; enabled: boolean; blocked: number }>
+  adblockToggle:   ()                        => Promise<{ domain: string; enabled: boolean; blocked: number }>
   getBookmarks:    ()                        => Promise<{ url: string; title: string; favicon?: string }[]>
   toggleBookmark:  (bm: object)             => Promise<{ url: string; title: string; favicon?: string }[]>
   on:              (ch: string, fn: (...a: unknown[]) => void) => void
@@ -256,12 +258,12 @@ browser.on('session:restore', (data: unknown) => {
 browser.on('activated', (id: unknown) => {
   const nid = id as number
   if (nid !== active) prevActive = active   // remember the tab we're leaving
-  active = nid; syncURLBar(); renderTabs(); updateBookmarkBtn(); persistSession()
+  active = nid; syncURLBar(); renderTabs(); updateBookmarkBtn(); persistSession(); refreshShield()
 })
 browser.on('nav', (data: unknown) => {
   const { id, url } = data as { id: number; url: string }
   const tab = tabs.get(id); if (!tab) return
-  tab.url = url; if (id === active) { syncURLBar(); updateBookmarkBtn() }
+  tab.url = url; if (id === active) { syncURLBar(); updateBookmarkBtn(); refreshShield() }
   persistSession()
 })
 browser.on('nav-state', (data: unknown) => {
@@ -456,3 +458,29 @@ function renderTor(s: { installed: boolean; state: string; progress: number }) {
 browser.on('tor:status', (raw: unknown) => renderTor(raw as any))
 browser.torStatus().then(renderTor)
 $('btn-tor').addEventListener('click', async () => renderTor(await browser.torToggle()))
+
+// ── Adblock shield ──────────────────────────────────────────────────────────
+let shieldBlocked = 0
+function renderShield(s: { domain: string; enabled: boolean; blocked: number }) {
+  const btn = $('btn-shield')
+  shieldBlocked = s.blocked
+  btn.classList.toggle('off', !s.enabled)
+  const count = $('shield-count')
+  count.textContent = s.enabled && s.blocked > 0 ? String(s.blocked) : ''
+  btn.title = !s.domain ? 'Ad blocking'
+    : s.enabled ? `Ad blocking ON for ${s.domain} — ${s.blocked} blocked on this page. Click to allow ads here.`
+    : `Ad blocking OFF for ${s.domain}. Click to re-enable.`
+}
+function refreshShield() {
+  if (active === null) return
+  browser.adblockStatus(active).then(renderShield)
+}
+$('btn-shield').addEventListener('click', async () => renderShield(await browser.adblockToggle()))
+browser.on('adblock:count', (raw: unknown) => {
+  const { tabId, blocked } = raw as { tabId: number; blocked: number }
+  if (tabId !== active) return
+  shieldBlocked = blocked
+  const count = $('shield-count')
+  if (!$('btn-shield').classList.contains('off')) count.textContent = blocked > 0 ? String(blocked) : ''
+})
+refreshShield()

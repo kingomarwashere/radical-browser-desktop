@@ -127,6 +127,15 @@
     #url-bar::placeholder { color: var(--text2); }
     #url-bar:focus        { border-color: var(--accent); background: var(--bg2); }
 
+    #btn-shield { font-size: 14px; position: relative; }
+    #btn-shield.off { opacity: 0.4; filter: grayscale(1); }
+    #btn-shield .shield-count {
+      position: absolute; bottom: -2px; right: -3px;
+      font-size: 8px; font-weight: 700; color: #fff;
+      background: var(--accent); border-radius: 6px; padding: 0 2px; line-height: 1.3; min-width: 10px; text-align: center;
+    }
+    #btn-shield.off .shield-count { display: none; }
+
     #btn-bookmark { font-size: 16px; }
     #btn-bookmark.bookmarked { color: #f5c518; }
 
@@ -154,6 +163,7 @@
       <div class="nav-btn dim" id="btn-forward" title="Forward (⌘])">→</div>
       <div class="nav-btn"     id="btn-reload"  title="Reload (⌘R) — ⇧-click or ⌘⇧R to hard reload">↻</div>
       <input id="url-bar" type="text" placeholder="Search or enter URL…" spellcheck="false" autocomplete="off">
+      <div class="nav-btn" id="btn-shield" title="Ad blocking">🛡️<span class="shield-count" id="shield-count"></span></div>
       <div class="nav-btn" id="btn-bookmark" title="Bookmark this page">☆</div>
       <div class="nav-btn" id="btn-tor" title="Tor: off">🧅</div>
     </div>

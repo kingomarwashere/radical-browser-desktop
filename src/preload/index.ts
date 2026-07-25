@@ -20,6 +20,8 @@ contextBridge.exposeInMainWorld('browser', {
   omniQuery:       (text: string, left: number, width: number) => ipcRenderer.invoke('omni:query', { text, left, width }),
   omniSelect:      (sel: number)                     => ipcRenderer.invoke('omni:select', sel),
   omniHide:        ()                                => ipcRenderer.invoke('omni:hide'),
+  adblockStatus:   (tabId?: number)                  => ipcRenderer.invoke('adblock:status', tabId),
+  adblockToggle:   ()                                => ipcRenderer.invoke('adblock:toggle'),
   getResponseBody: (tabId: number, reqId: string)    => ipcRenderer.invoke('net:body', { tabId, reqId }),
   getCookies:      (tabId: number)                   => ipcRenderer.invoke('net:cookies', tabId),
   replay:          (opts: object)                    => ipcRenderer.invoke('net:replay', opts),

@@ -1,11 +1,12 @@
 import { app, BrowserWindow, WebContentsView, ipcMain, session, Menu, MenuItem, MenuItemConstructorOptions, clipboard, shell } from 'electron'
 import { join } from 'path'
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs'
+import { readFileSync, writeFileSync, existsSync, mkdirSync, statSync } from 'node:fs'
 import * as dns from 'node:dns/promises'
 import * as net from 'node:net'
 import * as tls from 'node:tls'
 import { spawn, execFile, execFileSync } from 'node:child_process'
 import { homedir } from 'node:os'
+import { FiltersEngine, Request as AbRequest } from '@ghostery/adblocker'
 
 // ── Bookmarks ─────────────────────────────────────────────────────────────────
 interface Bookmark { url: string; title: string; favicon?: string }
@@ -140,6 +141,60 @@ function isBlocked(url: string): boolean {
     h = h.slice(dot + 1)
   }
   return false
+}
+
+// ── Full adblock engine (EasyList/EasyPrivacy + cosmetics via @ghostery) ──────
+// The static BLOCKED_HOSTS above is the instant fallback until the engine loads.
+let abEngine: FiltersEngine | null = null
+const allowlist = new Set<string>()          // registrable domains where blocking is OFF
+const blockedCount = new Map<number, number>()  // tabId → # requests blocked on current page
+function abEnginePath()  { return join(app.getPath('userData'), 'adblock-engine.bin') }
+function allowlistPath() { return join(app.getPath('userData'), 'adblock-allowlist.json') }
+const WEEK_MS = 7 * 24 * 60 * 60 * 1000
+
+// Electron resourceType → the request type the engine expects.
+const AB_TYPE: Record<string, string> = {
+  mainFrame: 'document', subFrame: 'sub_frame', stylesheet: 'stylesheet', script: 'script',
+  image: 'image', font: 'font', object: 'object', xhr: 'xhr', ping: 'ping',
+  cspReport: 'csp_report', media: 'media', webSocket: 'websocket', other: 'other',
+}
+function regDomain(url: string): string {
+  try { return AbRequest.fromRawDetails({ url, sourceUrl: url, type: 'document' }).domain || '' }
+  catch { try { return new URL(url).hostname.replace(/^www\./, '') } catch { return '' } }
+}
+function isAllowlisted(url: string): boolean {
+  const d = regDomain(url)
+  return !!d && allowlist.has(d)
+}
+function loadAllowlist() {
+  try {
+    if (existsSync(allowlistPath())) {
+      const arr = JSON.parse(readFileSync(allowlistPath(), 'utf8'))
+      if (Array.isArray(arr)) for (const d of arr) allowlist.add(d)
+    }
+  } catch {}
+}
+function saveAllowlist() {
+  try { writeFileSync(allowlistPath(), JSON.stringify([...allowlist])) } catch {}
+}
+async function loadAdblockEngine() {
+  // Fast path: deserialize the cached compiled engine.
+  try {
+    if (existsSync(abEnginePath())) {
+      abEngine = FiltersEngine.deserialize(new Uint8Array(readFileSync(abEnginePath())))
+      // Refresh in the background if the lists are more than a week old.
+      try { if (Date.now() - statSync(abEnginePath()).mtimeMs > WEEK_MS) void refreshAdblockEngine() } catch {}
+      return
+    }
+  } catch {}
+  await refreshAdblockEngine()
+}
+async function refreshAdblockEngine() {
+  try {
+    const fresh = await FiltersEngine.fromPrebuiltAdsAndTracking(fetch)
+    abEngine = fresh
+    try { writeFileSync(abEnginePath(), Buffer.from(fresh.serialize())) } catch {}
+  } catch {}   // stays on cache / static fallback if the download fails
 }
 
 // ── Resource type normalisation (webRequest → CDP style) ──────────────────────
@@ -488,6 +543,8 @@ function newTab(url = 'about:blank'): number {
   const pushNav = (u: string) => {
     if (sleepingIds.has(id)) return   // ignore the about:blank sleep navigation
     tabMeta.set(id, { ...tabMeta.get(id)!, url: u })
+    blockedCount.set(id, 0)           // reset the adblock counter for the new page
+    push('adblock:count', { tabId: id, blocked: 0 })
     recordVisit(u, tabMeta.get(id)!.title)   // feed URL autocomplete history
     push('nav', { id, url: u })
     push('nav-state', {
@@ -718,12 +775,30 @@ function buildMenu() {
 app.whenReady().then(() => {
   buildMenu()
   loadHistory()
+  loadAllowlist()
+  void loadAdblockEngine()
 
   // ── Network monitoring via webRequest (no CDP required) ───────────────────
   // Single onBeforeRequest handler: ad-block + capture requests
   session.defaultSession.webRequest.onBeforeRequest({ urls: ['*://*/*'] }, (details, cb) => {
-    const cancel = isBlocked(details.url)
     const tabId  = details.webContentsId ?? 0
+    const sourceUrl = tabId > 0 ? tabMeta.get(tabId)?.url : undefined
+    let cancel = false
+    if (!sourceUrl || !isAllowlisted(sourceUrl)) {   // respect the per-site toggle
+      if (abEngine) {
+        try {
+          cancel = abEngine.match(AbRequest.fromRawDetails({
+            url: details.url, type: (AB_TYPE[details.resourceType] ?? 'other') as never, sourceUrl,
+          })).match
+        } catch { cancel = isBlocked(details.url) }
+      } else {
+        cancel = isBlocked(details.url)   // static fallback until the engine loads
+      }
+    }
+    if (cancel && tabId > 0) {
+      blockedCount.set(tabId, (blockedCount.get(tabId) ?? 0) + 1)
+      if (!win.isDestroyed()) win.webContents.send('adblock:count', { tabId, blocked: blockedCount.get(tabId) })
+    }
     // Only capture request metadata when the inspector is actually open.
     // Ad-block (cancel) still runs always. Downstream listeners no-op when a
     // request isn't recorded in pendingReqs, so this gates the whole chain.
@@ -961,6 +1036,42 @@ app.whenReady().then(() => {
   // HTTP auth prompt result
   ipcMain.on('auth:submit', (_, { username, password }: { username: string; password: string }) => currentAuthFinish?.(username, password))
   ipcMain.on('auth:cancel', () => currentAuthFinish?.())
+
+  // ── Adblock: cosmetics, per-site status + toggle ───────────────────────────
+  // Tab preload asks for element-hiding CSS. First call (no DOM signals) returns
+  // base + hostname rules; later calls pass page classes/ids for matched generics.
+  ipcMain.handle('adblock:cosmetics', (_, arg: { url: string; classes?: string[]; ids?: string[] }) => {
+    const { url, classes, ids } = arg || {}
+    if (!abEngine || !/^https?:/i.test(url) || isAllowlisted(url)) return ''
+    const hasDom = !!((classes && classes.length) || (ids && ids.length))
+    try {
+      const req = AbRequest.fromRawDetails({ url, sourceUrl: url, type: 'document' })
+      const { styles } = abEngine.getCosmeticsFilters({
+        url, hostname: req.hostname, domain: req.domain, classes, ids, hrefs: [],
+        getBaseRules: !hasDom, getRulesFromHostname: !hasDom, getRulesFromDOM: hasDom,
+        getInjectionRules: false, getExtendedRules: false,
+      })
+      return styles || ''
+    } catch { return '' }
+  })
+  const adblockStatus = (tabId: number | null) => {
+    const url = (tabId != null && tabMeta.get(tabId)?.url) || ''
+    const httpPage = /^https?:/i.test(url)
+    const domain = regDomain(url)
+    const off = domain !== '' && allowlist.has(domain)   // only real domains can be allowlisted
+    return { domain, enabled: httpPage && !off, blocked: tabId != null ? (blockedCount.get(tabId) ?? 0) : 0 }
+  }
+  ipcMain.handle('adblock:status', (_, tabId?: number) => adblockStatus(tabId ?? activeId))
+  ipcMain.handle('adblock:toggle', () => {
+    if (activeId === null) return { domain: '', enabled: false, blocked: 0 }
+    const d = regDomain(tabMeta.get(activeId)?.url || '')
+    if (!d) return { domain: '', enabled: false, blocked: 0 }
+    if (allowlist.has(d)) allowlist.delete(d); else allowlist.add(d)
+    saveAllowlist()
+    sendToAll('net:clear', { tabId: activeId })
+    tabs.get(activeId)?.webContents.reload()   // reload so the new state applies
+    return adblockStatus(activeId)
+  })
 
   // window.prompt() backing — synchronous native dialog (Electron has no prompt).
   ipcMain.on('window-prompt', (event, { message, defaultValue }: { message: string; defaultValue: string }) => {

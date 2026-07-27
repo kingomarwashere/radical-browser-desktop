@@ -16,6 +16,7 @@
     "appId": "com.radicalbrowser.desktop",
     "productName": "Radical Browser",
     "copyright": "Copyright © 2025 Radical Browser",
+    "afterSign": "scripts/notarize.js",
     "mac": {
       "icon": "assets/icon.icns",
       "category": "public.app-category.productivity",
@@ -28,7 +29,11 @@
           ]
         }
       ],
-      "darkModeSupport": true
+      "darkModeSupport": true,
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false,
+      "entitlements": "assets/entitlements.mac.plist",
+      "entitlementsInherit": "assets/entitlements.mac.plist"
     },
     "dmg": {
       "title": "Radical Browser",
@@ -55,6 +60,7 @@
     "multicast-dns": "^7.2.5"
   },
   "devDependencies": {
+    "@electron/notarize": "^3.1.1",
     "@types/node": "^22.0.0",
     "electron": "^35.0.0",
     "electron-builder": "^25.1.8",

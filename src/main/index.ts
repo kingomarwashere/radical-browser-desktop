@@ -7,6 +7,7 @@ import * as tls from 'node:tls'
 import { spawn, execFile, execFileSync } from 'node:child_process'
 import { homedir } from 'node:os'
 import { FiltersEngine, Request as AbRequest } from '@ghostery/adblocker'
+import * as cast from './cast'
 
 // ── Bookmarks ─────────────────────────────────────────────────────────────────
 interface Bookmark { url: string; title: string; favicon?: string }
@@ -735,6 +736,34 @@ function activateTab(id: number, focusURL = false) {
   }
 }
 
+// ── Casting: find a castable media URL in the active tab ──────────────────────
+// Ask the page for a playing <video>/<audio>'s resolved source. Fall back to the
+// tab URL when it's itself a direct media file. blob:/MSE sources can't be flung
+// (the receiver can't refetch them) so they're rejected with a helpful message.
+const MEDIA_EXT = /\.(mp4|m4v|webm|mov|mkv|ogv|m3u8|mpd|mp3|m4a|aac|ogg|wav|flac)(\?|#|$)/i
+async function findCastableMedia(id: number): Promise<{ url?: string; reason?: string }> {
+  const view = tabs.get(id)
+  if (!view) return { reason: 'No active tab.' }
+  let found: { src: string; pageUrl: string; hadMedia: boolean; blobOnly: boolean }
+  try {
+    found = await view.webContents.executeJavaScript(`(() => {
+      const els = [...document.querySelectorAll('video,audio')];
+      const pick = els.find(e => !e.paused && (e.currentSrc || e.src))
+        || els.find(e => e.currentSrc || e.src) || els[0];
+      const src = pick ? (pick.currentSrc || pick.src || '') : '';
+      return { src, pageUrl: location.href, hadMedia: els.length > 0, blobOnly: src.startsWith('blob:') };
+    })()`, true)
+  } catch { found = { src: '', pageUrl: view.webContents.getURL(), hadMedia: false, blobOnly: false } }
+
+  if (found.src && /^https?:\/\//i.test(found.src)) return { url: found.src }
+  if (MEDIA_EXT.test(found.pageUrl)) return { url: found.pageUrl }
+  if (found.blobOnly)
+    return { reason: 'This video uses adaptive streaming (blob source) which can’t be flung to a receiver.' }
+  if (found.hadMedia)
+    return { reason: 'The video source isn’t a direct URL a receiver can play.' }
+  return { reason: 'No video or audio found on this page to cast.' }
+}
+
 // ── Menu ──────────────────────────────────────────────────────────────────────
 app.setName('Radical Browser')
 
@@ -1101,6 +1130,49 @@ end run`
     saveBookmarks(bms)
     return bms
   })
+
+  // ── Casting (Chromecast / AirPlay) ─────────────────────────────────────────
+  cast.startDiscovery()
+  cast.onStateChange(s => sendToAll('cast:state', s))
+
+  // Click the cast button → native menu of discovered receivers. Picking one
+  // finds the active tab's media URL and flings it; a separate item stops.
+  ipcMain.handle('cast:menu', async () => {
+    const devices = cast.listDevices()
+    const state = cast.getState()
+    const items: MenuItemConstructorOptions[] = []
+    if (state.casting) {
+      items.push(
+        { label: `Casting to ${state.device ?? 'device'}`, enabled: false },
+        { label: 'Stop Casting', click: () => void cast.stopCast() },
+        { type: 'separator' },
+      )
+    }
+    items.push({ label: devices.length ? 'Cast this video to…' : 'Searching for devices…', enabled: false })
+    if (!devices.length) {
+      items.push({ label: 'No Chromecast or AirPlay devices found', enabled: false })
+    } else {
+      for (const d of devices) {
+        items.push({
+          label: `${d.name}  ·  ${d.kind === 'airplay' ? 'AirPlay' : 'Chromecast'}`,
+          type: 'radio',
+          checked: state.casting && state.device === d.name,
+          click: async () => {
+            if (activeId === null) return
+            const media = await findCastableMedia(activeId)
+            if (!media.url) {
+              sendToAll('cast:state', { casting: false, error: media.reason })
+              return
+            }
+            await cast.startCast(d.id, media.url)
+          },
+        })
+      }
+    }
+    Menu.buildFromTemplate(items).popup({ window: win })
+  })
+  ipcMain.handle('cast:state', () => cast.getState())
+  ipcMain.handle('cast:stop', () => cast.stopCast())
 
   // ── Recon / security tooling (pure Node built-ins) ────────────────────────
   const cleanHost = (h: string) => h.trim().replace(/^https?:\/\//, '').replace(/\/.*$/, '').replace(/:\d+$/, '')

@@ -139,6 +139,14 @@
     #btn-bookmark { font-size: 16px; }
     #btn-bookmark.bookmarked { color: #f5c518; }
 
+    #btn-cast { font-size: 14px; position: relative; }
+    #btn-cast.casting { color: var(--accent); }
+    #btn-cast.casting::after {
+      content: ''; position: absolute; bottom: 2px; right: 2px;
+      width: 6px; height: 6px; border-radius: 50%; background: var(--accent);
+      box-shadow: 0 0 4px var(--accent);
+    }
+
     #btn-tor { font-size: 14px; position: relative; }
     #btn-tor.starting { color: #d29922; }
     #btn-tor.on       { color: #9b59d0; }
@@ -165,6 +173,7 @@
       <input id="url-bar" type="text" placeholder="Search or enter URL…" spellcheck="false" autocomplete="off">
       <div class="nav-btn" id="btn-shield" title="Ad blocking">🛡️<span class="shield-count" id="shield-count"></span></div>
       <div class="nav-btn" id="btn-bookmark" title="Bookmark this page">☆</div>
+      <div class="nav-btn" id="btn-cast" title="Cast video to Chromecast or AirPlay">📺</div>
       <div class="nav-btn" id="btn-tor" title="Tor: off">🧅</div>
     </div>
   </div>

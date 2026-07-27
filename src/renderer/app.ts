@@ -20,8 +20,12 @@ declare const browser: {
   adblockToggle:   ()                        => Promise<{ domain: string; enabled: boolean; blocked: number }>
   getBookmarks:    ()                        => Promise<{ url: string; title: string; favicon?: string }[]>
   toggleBookmark:  (bm: object)             => Promise<{ url: string; title: string; favicon?: string }[]>
+  castMenu:        ()                        => Promise<void>
+  castState:       ()                        => Promise<CastState>
+  castStop:        ()                        => Promise<CastState>
   on:              (ch: string, fn: (...a: unknown[]) => void) => void
 }
+interface CastState { casting: boolean; device?: string; kind?: string; media?: string; error?: string }
 
 interface Tab { id: number; title: string; url: string; favicon?: string; loading: boolean; sleeping?: boolean; keepAwake?: boolean }
 interface Suggestion { url: string; title: string; bookmark: boolean }
@@ -476,6 +480,24 @@ function refreshShield() {
   browser.adblockStatus(active).then(renderShield)
 }
 $('btn-shield').addEventListener('click', async () => renderShield(await browser.adblockToggle()))
+
+// ── Cast (Chromecast / AirPlay) ──────────────────────────────────────────────
+function renderCast(s: CastState) {
+  const btn = $('btn-cast')
+  btn.classList.toggle('casting', !!s.casting)
+  btn.title = s.casting
+    ? `Casting to ${s.device} — click to stop or switch`
+    : 'Cast video to Chromecast or AirPlay'
+  // Surface a failed/empty cast attempt briefly in the tooltip.
+  if (!s.casting && s.error) {
+    btn.title = s.error
+    setTimeout(() => { if (!$('btn-cast').classList.contains('casting')) $('btn-cast').title = 'Cast video to Chromecast or AirPlay' }, 6000)
+  }
+}
+$('btn-cast').addEventListener('click', () => browser.castMenu())
+browser.on('cast:state', (raw: unknown) => renderCast(raw as CastState))
+browser.castState().then(renderCast)
+
 browser.on('adblock:count', (raw: unknown) => {
   const { tabId, blocked } = raw as { tabId: number; blocked: number }
   if (tabId !== active) return

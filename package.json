@@ -1,6 +1,6 @@
 {
   "name": "radical-browser-desktop",
-  "version": "0.3.11",
+  "version": "0.3.12",
   "description": "The browser built for builders.",
   "author": "The Radical Party",
   "private": true,
@@ -51,7 +51,8 @@
     }
   },
   "dependencies": {
-    "@ghostery/adblocker": "^2.18.1"
+    "@ghostery/adblocker": "^2.18.1",
+    "multicast-dns": "^7.2.5"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

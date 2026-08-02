@@ -1,5 +1,5 @@
 import { ipcRenderer } from 'electron'
-import './youtube'   // YouTube video-ad stripping (list-based blocking can't reach these)
+import './youtube'   // YouTube ad handling: gated poll, works via shared DOM
 
 // Electron doesn't implement window.prompt() — it returns null and warns, so
 // pages that gate on `prompt()` (e.g. a password check) break silently. Provide

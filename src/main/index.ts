@@ -519,11 +519,18 @@ function interceptShortcuts(view: WebContentsView) {
 function newTab(url = 'about:blank'): number {
   const view = new WebContentsView({
     webPreferences: {
-      // contextIsolation off + a minimal preload so window.prompt (which Electron
-      // doesn't implement) can be provided before page scripts run. nodeIntegration
-      // stays off and the preload exposes nothing to the page but the prompt override.
+      // contextIsolation MUST stay ON. With it off, Electron leaks its module
+      // globals into the page's main world, and YouTube's bundle detects them
+      // and wedges its client-side router — after the first navigation, sidebar
+      // videos stop opening (they reload the current video instead). Isolation
+      // fixes that and is also Electron's security-recommended default. The
+      // preload still shares the DOM, so cosmetic ad-hiding and the YouTube
+      // ad-skip keep working from the isolated world, and the network ad-block
+      // engine runs in the main process regardless. Trade-off: the page-world
+      // window.prompt override no longer applies (native prompt dialogs), an
+      // acceptable loss versus a browser that can't navigate YouTube.
       preload: join(__dirname, '../preload/tab.js'),
-      contextIsolation: false, nodeIntegration: false, sandbox: false,
+      contextIsolation: true, nodeIntegration: false, sandbox: false,
     },
   })
   win.contentView.addChildView(view)
@@ -877,7 +884,11 @@ app.whenReady().then(() => {
         securityState: null,
       })
     }
-    cb({ responseHeaders: details.responseHeaders })
+    // Observe only — pass cb({}) so the original response headers are used
+    // unchanged. (Re-emitting details.responseHeaders would make Electron
+    // re-serialize the header block, which can mangle duplicate Set-Cookie
+    // headers; cleaner to leave them untouched.)
+    cb({})
   })
 
   session.defaultSession.webRequest.onCompleted({ urls: ['*://*/*'] }, (details) => {

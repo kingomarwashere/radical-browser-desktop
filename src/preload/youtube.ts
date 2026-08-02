@@ -32,10 +32,18 @@
   const isPlayerApi = (url: string) =>
     /\/youtubei\/v1\/(player|reel_item_watch)(\?|$)/.test(url)
 
+  // Toggle for the network-layer pruning (fetch/XHR). The reactive DOM skipper
+  // below works without it; kept off because reconstructing the /player Response
+  // breaks YouTube's SPA navigation controller after the first navigation.
+  const NETWORK_PRUNE = false
+
   // ── fetch: the primary transport for InnerTube today ──────────────────────
-  const origFetch = window.fetch
-  window.fetch = async function (this: unknown, ...args: Parameters<typeof fetch>) {
-    const res = await origFetch.apply(this as never, args)
+  // Bind to window: native fetch throws "Illegal invocation" if called with any
+  // other receiver, and page code calls bare `fetch(...)` (receiver undefined),
+  // which would otherwise kill every request — breaking SPA navigation.
+  const origFetch = window.fetch.bind(window)
+  if (NETWORK_PRUNE) window.fetch = async function (...args: Parameters<typeof fetch>) {
+    const res = await origFetch(...args)
     try {
       const input = args[0]
       const url = typeof input === 'string' ? input
@@ -56,7 +64,7 @@
 
   // ── XHR: some polymer paths still use it ──────────────────────────────────
   const origOpen = XMLHttpRequest.prototype.open
-  XMLHttpRequest.prototype.open = function (this: XMLHttpRequest, method: string, url: string, ...rest: unknown[]) {
+  if (NETWORK_PRUNE) XMLHttpRequest.prototype.open = function (this: XMLHttpRequest, method: string, url: string, ...rest: unknown[]) {
     if (typeof url === 'string' && isPlayerApi(url)) {
       this.addEventListener('readystatechange', function () {
         if (this.readyState !== 4) return
@@ -74,20 +82,30 @@
   }
 
   // ── DOM fallback: auto-skip / seek past any ad that still renders ──────────
+  // CRITICAL: only ever act while an ad is actually on screen, and only click
+  // the skip button once per ad. An earlier version clicked any skip element
+  // that merely *existed* and ran on every DOM mutation — each click mutated
+  // the DOM, retriggering the observer, producing a click storm that wedged
+  // YouTube's SPA navigation (sidebar links stopped working). Now it's a plain
+  // gated poll: no mutation observer, no work at all when no ad is playing.
+  let skippedForAd = false
   function killVisibleAd() {
-    const skip = document.querySelector(
-      '.ytp-ad-skip-button, .ytp-ad-skip-button-modern, .ytp-skip-ad-button, .ytp-ad-skip-button-container button',
-    ) as HTMLElement | null
-    if (skip) skip.click()
-
     const player = document.querySelector('.html5-video-player')
-    if (player?.classList.contains('ad-showing')) {
-      const video = document.querySelector('video.html5-main-video') as HTMLVideoElement | null
-      if (video && isFinite(video.duration) && video.duration > 0) {
-        video.currentTime = video.duration   // jump the ad to its end
-        video.muted = true
-      }
+    if (!player?.classList.contains('ad-showing')) { skippedForAd = false; return }
+
+    // Unskippable ad: jump it to the end and mute.
+    const video = document.querySelector('video.html5-main-video') as HTMLVideoElement | null
+    if (video && isFinite(video.duration) && video.duration > 0) {
+      video.currentTime = video.duration
+      video.muted = true
+    }
+    // Skippable ad: click Skip exactly once per ad.
+    if (!skippedForAd) {
+      const skip = document.querySelector(
+        '.ytp-ad-skip-button, .ytp-ad-skip-button-modern, .ytp-skip-ad-button',
+      ) as HTMLElement | null
       const close = document.querySelector('.ytp-ad-overlay-close-button') as HTMLElement | null
+      if (skip) { skip.click(); skippedForAd = true }
       if (close) close.click()
     }
   }
@@ -109,13 +127,9 @@
 
   function start() {
     injectHidingCss()
-    killVisibleAd()
-    // Ads render mid-playback, so a light poll plus a mutation observer keeps
-    // the skip responsive without hammering the main thread.
-    setInterval(killVisibleAd, 400)
-    new MutationObserver(killVisibleAd).observe(document.documentElement, {
-      childList: true, subtree: true, attributes: true, attributeFilter: ['class'],
-    })
+    // A plain 500ms poll — deliberately NOT a MutationObserver. Catches an ad
+    // within half a second without ever entering a click/mutation feedback loop.
+    setInterval(killVisibleAd, 500)
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start, { once: true })

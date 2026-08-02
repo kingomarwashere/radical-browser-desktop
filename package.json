@@ -9,7 +9,7 @@
     "build": "node build.mjs",
     "dev": "node build.mjs && electron .",
     "start": "electron .",
-    "dist": "node build.mjs && electron-builder --mac --publish never",
+    "dist": "node build.mjs && electron-builder --mac dmg --arm64 --publish never && electron-builder --mac dmg --x64 --publish never",
     "dist:all": "node build.mjs && electron-builder --mac --linux --win --publish never"
   },
   "build": {

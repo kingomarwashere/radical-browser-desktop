@@ -26,8 +26,11 @@
     }
   }
 
+  // Only the *player* response carries video-ad instructions. Deliberately NOT
+  // `next`/`reel_watch_sequence` — those drive sidebar/related navigation, and
+  // handing the router a reconstructed Response breaks in-page navigation.
   const isPlayerApi = (url: string) =>
-    /\/youtubei\/v1\/(player|next|reel_item_watch|reel_watch_sequence)/.test(url)
+    /\/youtubei\/v1\/(player|reel_item_watch)(\?|$)/.test(url)
 
   // ── fetch: the primary transport for InnerTube today ──────────────────────
   const origFetch = window.fetch

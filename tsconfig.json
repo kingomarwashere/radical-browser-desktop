@@ -6,7 +6,8 @@
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
-    "outDir": "build",
+    "noEmit": true,
+    "moduleDetection": "force",
     "rootDir": "src"
   },
   "include": ["src/**/*"]

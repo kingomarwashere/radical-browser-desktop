@@ -1,8 +1,23 @@
 import { build } from 'esbuild'
-import { copyFileSync, mkdirSync } from 'node:fs'
+import { copyFileSync, mkdirSync, rmSync } from 'node:fs'
 
-const base = { bundle: true, sourcemap: false, minify: false }
+// Production builds minify (smaller bundles = faster V8 parse on the cold-start
+// path, where the main + preload scripts run before anything paints). Set
+// NODE_ENV=development for readable output + inline sourcemaps while debugging.
+const prod = process.env.NODE_ENV !== 'development'
+const base = {
+  bundle: true,
+  minify: prod,
+  sourcemap: prod ? false : 'inline',
+  legalComments: 'none',
+  drop: prod ? ['debugger'] : [],
+}
 
+// Wipe stale compiled output so a renamed/removed entry point can't linger in
+// build/ and get packaged.
+rmSync('build', { recursive: true, force: true })
+
+try {
 await Promise.all([
   build({
     ...base,
@@ -116,4 +131,8 @@ copyFileSync('src/renderer/panel.html', 'build/renderer/panel.html')
 copyFileSync('src/renderer/omnibox.html', 'build/renderer/omnibox.html')
 copyFileSync('src/renderer/auth.html', 'build/renderer/auth.html')
 
-console.log('build done')
+console.log(`build done${prod ? ' (minified)' : ' (dev)'}`)
+} catch (err) {
+  console.error('build FAILED:', err)
+  process.exit(1)
+}

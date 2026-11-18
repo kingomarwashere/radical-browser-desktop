@@ -19,6 +19,14 @@ let allBookmarks: PBookmark[] = []
 let sel  = 0
 let flat: PItem[] = []
 
+// Tab/bookmark titles, URLs and favicon URLs are page-controlled (a site sets
+// its own document.title and favicon), so every one of them MUST be escaped
+// before going into innerHTML — otherwise a page titled `<img onerror=…>` runs
+// script in this palette window, which holds the privileged `browser` bridge.
+function esc(s: string) {
+  return s.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]!))
+}
+
 const COMMANDS: PItem[] = [
   { label: 'New Tab',                  key: '⌘T', onSelect: () => browser.palette.command('new-tab') },
   { label: 'Close Tab',               key: '⌘W', onSelect: () => browser.palette.command('close-tab') },
@@ -76,10 +84,10 @@ function render(q: string) {
     ${items.map(item => {
       const i = idx++
       return `<div class="item${i === 0 ? ' sel' : ''}" data-idx="${i}">
-        <span class="icon">${item.favicon ? `<img src="${item.favicon}">` : '›'}</span>
-        <span class="label">${item.label}</span>
-        ${item.sub ? `<span class="sub">${item.sub.replace(/^https?:\/\//, '')}</span>` : ''}
-        ${item.key ? `<span class="key">${item.key}</span>` : ''}
+        <span class="icon">${item.favicon ? `<img src="${esc(item.favicon)}">` : '›'}</span>
+        <span class="label">${esc(item.label)}</span>
+        ${item.sub ? `<span class="sub">${esc(item.sub.replace(/^https?:\/\//, ''))}</span>` : ''}
+        ${item.key ? `<span class="key">${esc(item.key)}</span>` : ''}
       </div>`
     }).join('')}
   `).join('')

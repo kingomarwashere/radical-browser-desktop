@@ -221,6 +221,7 @@ function castChromecast(device: CastDevice, mediaUrl: string): Promise<void> {
   return new Promise((resolve, reject) => {
     const source = 'sender-0'
     let settled = false
+    let hb: ReturnType<typeof setInterval> | undefined
     const fail = (e: Error) => { if (!settled) { settled = true; reject(e) } }
     const socket = tls.connect({ host: device.host, port: device.port, rejectUnauthorized: false, servername: device.host }, () => {
       const send = (dest: string, ns: string, payload: object) =>
@@ -230,11 +231,21 @@ function castChromecast(device: CastDevice, mediaUrl: string): Promise<void> {
       send('receiver-0', NS_HEARTBEAT, { type: 'PING' })
       send('receiver-0', NS_RECEIVER, { type: 'LAUNCH', appId: DEFAULT_MEDIA_RECEIVER, requestId: requestId++ })
 
-      const hb = setInterval(() => { try { send('receiver-0', NS_HEARTBEAT, { type: 'PING' }) } catch {} }, 5_000)
+      hb = setInterval(() => { try { send('receiver-0', NS_HEARTBEAT, { type: 'PING' }) } catch {} }, 5_000)
       hb.unref?.()
       if (active) active.heartbeat = hb
     })
     if (active) active.socket = socket
+
+    // A disconnect at any point must stop the heartbeat (it was only ever cleared
+    // in teardown(), so a drop AFTER a successful cast leaked a timer writing to a
+    // dead socket forever). If the drop happens post-success, also reflect that
+    // we've stopped casting so the menu/UI update.
+    const onDisconnect = (e: Error) => {
+      if (hb) { clearInterval(hb); hb = undefined }
+      if (!settled) { fail(e); return }
+      if (active && active.socket === socket) { active = null; setState({ casting: false }) }
+    }
 
     let buf = Buffer.alloc(0)
     let launched = false
@@ -276,8 +287,8 @@ function castChromecast(device: CastDevice, mediaUrl: string): Promise<void> {
         }
       }
     })
-    socket.on('error', (e) => fail(e))
-    socket.on('close', () => fail(new Error('Connection to Chromecast closed.')))
+    socket.on('error', (e) => onDisconnect(e))
+    socket.on('close', () => onDisconnect(new Error('Connection to Chromecast closed.')))
     socket.setTimeout(15_000, () => fail(new Error('Chromecast did not start playback in time.')))
     // Resolve optimistically once LOAD is acknowledged; if nothing within 8s but
     // no error either, treat as success (some receivers delay MEDIA_STATUS).

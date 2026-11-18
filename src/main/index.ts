@@ -49,18 +49,22 @@ function loadHistory() {
   } catch {}
 }
 let histTimer: ReturnType<typeof setTimeout> | undefined
+function writeHistoryNow() {
+  // Prune to the 4000 most frecent entries before writing.
+  let entries = [...history.values()]
+  if (entries.length > 4000) {
+    entries.sort((a, b) => frecency(b) - frecency(a))
+    entries = entries.slice(0, 4000)
+    history.clear(); for (const e of entries) history.set(e.url, e)
+  }
+  try { writeFileSync(historyPath(), JSON.stringify(entries)) } catch {}
+}
 function saveHistory() {
   clearTimeout(histTimer)
-  histTimer = setTimeout(() => {
-    // Prune to the 4000 most frecent entries before writing.
-    let entries = [...history.values()]
-    if (entries.length > 4000) {
-      entries.sort((a, b) => frecency(b) - frecency(a))
-      entries = entries.slice(0, 4000)
-      history.clear(); for (const e of entries) history.set(e.url, e)
-    }
-    try { writeFileSync(historyPath(), JSON.stringify(entries)) } catch {}
-  }, 2000)
+  histTimer = setTimeout(writeHistoryNow, 2000)
+}
+function flushHistory() {
+  if (histTimer) { clearTimeout(histTimer); histTimer = undefined; writeHistoryNow() }
 }
 function frecency(e: HistEntry) {
   const ageDays = (Date.now() - e.last) / 86400000
@@ -239,6 +243,7 @@ let omniboxView: WebContentsView | null = null   // address-bar autocomplete dro
 
 // pending webRequest entries: reqId → tabId + startTime
 const pendingReqs = new Map<number, { tabId: number; startTime: number }>()
+const lastCrashReload = new Map<number, number>()   // tabId → last auto-reload after a crash
 
 function viewBounds() {
   const { width, height } = win.getContentBounds()
@@ -287,6 +292,7 @@ function createOmniboxView() {
     },
   })
   omniboxView.setBackgroundColor('#00000000')
+  lockTrustedFrame(omniboxView.webContents)
   win.contentView.addChildView(omniboxView)
   omniboxView.setVisible(false)
   // Flush the latest items once the overlay's script is ready (avoids dropping
@@ -337,6 +343,7 @@ function showNextAuth() {
     },
   })
   const w = authWin
+  lockTrustedFrame(w.webContents)
   w.loadFile(join(__dirname, '../renderer/auth.html'))
   w.webContents.once('did-finish-load', () => { w.webContents.send('auth:info', req.authInfo); w.show() })
   w.on('closed', () => { authWin = null; currentAuthFinish?.() })   // dismissed = cancel
@@ -464,6 +471,7 @@ function showPalette() {
       contextIsolation: true, nodeIntegration: false,
     },
   })
+  lockTrustedFrame(paletteWin.webContents)
   paletteWin.loadFile(join(__dirname, '../renderer/palette.html'))
   paletteWin.on('blur',   () => { paletteWin?.close(); paletteWin = null })
   paletteWin.on('closed', () => { paletteWin = null })
@@ -500,6 +508,17 @@ function showPalette() {
     }
     if (map[cmd]) handleShortcut(map[cmd])
   })
+}
+
+// ── Lock down trusted chrome frames ───────────────────────────────────────────
+// The main window, inspector panel, omnibox dropdown, palette and auth prompt
+// all load ONLY our local files and carry privileged preloads. They must never
+// navigate to web content or open windows — if a bug ever caused that, remote
+// content would inherit the preload. Real (re)loads use loadFile (file://) and
+// don't trip will-navigate, so blocking everything else is safe.
+function lockTrustedFrame(wc: Electron.WebContents) {
+  wc.on('will-navigate', (e, url) => { if (!url.startsWith('file://')) e.preventDefault() })
+  wc.setWindowOpenHandler(() => ({ action: 'deny' }))
 }
 
 // ── Intercept shortcuts in tab WebContentsViews ───────────────────────────────
@@ -582,6 +601,20 @@ function newTab(url = 'about:blank'): number {
   // Video (or any element) going fullscreen → cover the whole window
   view.webContents.on('enter-html-full-screen', () => enterHtmlFullscreen(id))
   view.webContents.on('leave-html-full-screen', () => leaveHtmlFullscreen(id))
+
+  // Recover a crashed renderer. We sleep background tabs by deliberately crashing
+  // their renderer (forcefullyCrashRenderer), so ignore crashes while slept —
+  // those wake via loadURL. A genuine crash (OOM, page bug) on a live tab would
+  // otherwise leave it blank forever; reload it, throttled so a page that crashes
+  // on load can't spin in a reload loop.
+  view.webContents.on('render-process-gone', (_e, details) => {
+    if (sleepingIds.has(id) || details.reason === 'clean-exit') return
+    const now = Date.now()
+    if (now - (lastCrashReload.get(id) ?? 0) < 10_000) return
+    lastCrashReload.set(id, now)
+    const u = tabMeta.get(id)?.url
+    if (u && /^https?:/i.test(u)) view.webContents.loadURL(u).catch(() => {})
+  })
 
   view.webContents.on('context-menu', (_, params) => {
     const items: MenuItemConstructorOptions[] = []
@@ -897,7 +930,7 @@ app.whenReady().then(() => {
       pushToRenderer('net:done', req.tabId, {
         id:      String(details.id),
         endTime: Date.now() / 1000,
-        size:    details.responseSize ?? 0,
+        size:    (details as { responseSize?: number }).responseSize ?? 0,
       })
       pendingReqs.delete(details.id)
     }
@@ -926,6 +959,7 @@ app.whenReady().then(() => {
     },
   })
 
+  lockTrustedFrame(win.webContents)
   win.loadFile(join(__dirname, '../renderer/index.html'))
   const layoutActive = () => {
     if (activeId !== null) tabs.get(activeId)?.setBounds(htmlFullscreen ? fullBounds() : viewBounds())
@@ -966,6 +1000,7 @@ app.whenReady().then(() => {
     view.webContents.close()
     tabs.delete(id); tabMeta.delete(id)
     lastActive.delete(id); keepAwake.delete(id); sleepingIds.delete(id); sleepUrl.delete(id)
+    blockedCount.delete(id); lastCrashReload.delete(id)
     if (activeId === id) {
       activeId = null
       const remaining = [...tabs.keys()]
@@ -1012,25 +1047,38 @@ app.whenReady().then(() => {
     const view = tabs.get(tabId)
     if (!view) return null
     const dbg = view.webContents.debugger
+    // Detach again when done if we were the ones who attached — otherwise the
+    // debugger stays bound for the tab's life, leaking and blocking DevTools
+    // (a webContents allows only one debugger client).
+    const wasAttached = dbg.isAttached()
     try {
-      if (!dbg.isAttached()) dbg.attach()
+      if (!wasAttached) dbg.attach()
       return await dbg.sendCommand('Network.getResponseBody', { requestId: reqId })
     } catch { return null }
+    finally { if (!wasAttached && dbg.isAttached()) { try { dbg.detach() } catch {} } }
   })
 
   ipcMain.handle('net:cookies', async (_, tabId: number) => {
     const view = tabs.get(tabId)
     if (!view) return []
     const dbg = view.webContents.debugger
+    const wasAttached = dbg.isAttached()
     try {
-      if (!dbg.isAttached()) dbg.attach()
+      if (!wasAttached) dbg.attach()
       const r = await dbg.sendCommand('Network.getAllCookies')
       return r.cookies ?? []
     } catch { return [] }
+    finally { if (!wasAttached && dbg.isAttached()) { try { dbg.detach() } catch {} } }
   })
 
   ipcMain.handle('net:replay', async (_, opts: { method: string; url: string; headers: Record<string, string>; body?: string }) => {
     try {
+      // Only let the replay tool speak http(s). Without this, the main-process
+      // fetch would happily follow file:/other schemes — an SSRF/local-read
+      // gadget. (localhost/intranet stay reachable: this is a dev inspector.)
+      let scheme = ''
+      try { scheme = new URL(opts.url).protocol } catch { return { ok: false, error: 'Invalid URL' } }
+      if (scheme !== 'http:' && scheme !== 'https:') return { ok: false, error: 'Only http(s) URLs can be replayed' }
       const res = await fetch(opts.url, {
         method: opts.method, headers: opts.headers,
         body: ['GET','HEAD'].includes(opts.method.toUpperCase()) ? undefined : (opts.body || undefined),
@@ -1481,6 +1529,7 @@ end run`
         contextIsolation: true, nodeIntegration: false,
       }
     })
+    lockTrustedFrame(panelView.webContents)
     win.contentView.addChildView(panelView)
     panelView.setVisible(false)
     panelView.webContents.loadFile(join(__dirname, '../renderer/panel.html'))
@@ -1516,4 +1565,10 @@ app.on('window-all-closed', () => {
 
 app.on('before-quit', () => {
   if (torProc) { try { torProc.kill('SIGTERM') } catch {} torProc = null }
+  // Flush any pending history write (debounced up to 2s — don't lose the last
+  // visits), and tear down casting + mDNS discovery so we don't leave the TV on
+  // the receiver app or an mDNS socket open.
+  flushHistory()
+  void cast.stopCast()
+  cast.stopDiscovery()
 })

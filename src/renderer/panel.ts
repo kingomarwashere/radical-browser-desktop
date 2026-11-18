@@ -168,15 +168,21 @@ $('panel-resize').addEventListener('mousedown', e => {
   $('panel-resize').classList.add('dragging')
   e.preventDefault()
 })
+let resizeRaf = 0
 document.addEventListener('mousemove', e => {
   if (!resizing) return
   const delta = resizeStartY - e.clientY
-  panelH = Math.max(180, Math.min(window.screen.height - 160, resizeStartH + delta))
+  // Clamp to the window's own content height (not the whole physical screen,
+  // which let the panel grow taller than the window on small/secondary displays).
+  panelH = Math.max(180, Math.min(window.innerHeight - 120, resizeStartH + delta))
+  // Apply live so the panel tracks the cursor, coalesced to one IPC per frame.
+  if (!resizeRaf) resizeRaf = requestAnimationFrame(() => { resizeRaf = 0; void panel.setPanelHeight(panelH) })
 })
 document.addEventListener('mouseup', async () => {
   if (!resizing) return
   resizing = false
   $('panel-resize').classList.remove('dragging')
+  if (resizeRaf) { cancelAnimationFrame(resizeRaf); resizeRaf = 0 }
   await panel.setPanelHeight(panelH)
 })
 
@@ -213,6 +219,12 @@ function renderNet() {
   const empty = $('net-empty')
   empty.style.display = rows.length === 0 ? '' : 'none'
 
+  // Only follow the tail if the user is already parked at the bottom. Otherwise
+  // a page still firing requests would keep yanking them away from a row they
+  // scrolled up to inspect.
+  const wrap = $('net-list-wrap')
+  const pinned = !wrap || wrap.scrollTop + wrap.clientHeight >= wrap.scrollHeight - 4
+
   const tbody = $('net-tbody')
   tbody.innerHTML = rows.map(e => {
     const cls = !e.status ? (e.failed ? 's-fail' : 's-pending')
@@ -238,8 +250,7 @@ function renderNet() {
     </tr>`
   }).join('')
 
-  const wrap = $('net-list-wrap')
-  if (wrap) wrap.scrollTop = wrap.scrollHeight
+  if (wrap && pinned) wrap.scrollTop = wrap.scrollHeight
 }
 
 // Coalesce bursts of net events (req/res/done can fire hundreds of times per
@@ -281,13 +292,13 @@ function renderDetail() {
       <div class="dhead">Request Headers</div>
       <div class="dkv"><span class="dk">Method</span><span class="dv">${e.method}</span></div>
       <div class="dkv"><span class="dk">URL</span><span class="dv">${escHtml(e.url)}</span></div>
-      ${e.initiator ? `<div class="dkv"><span class="dk">Initiator</span><span class="dv">${e.initiator}</span></div>` : ''}
+      ${e.initiator ? `<div class="dkv"><span class="dk">Initiator</span><span class="dv">${escHtml(e.initiator)}</span></div>` : ''}
       ${Object.entries(reqH).map(([k,v]) => `<div class="dkv"><span class="dk">${escHtml(k)}</span><span class="dv">${escHtml(v)}</span></div>`).join('')}
       ${e.reqBody ? `<div class="dhead">Request Body</div><div class="dv" style="word-break:break-all;white-space:pre-wrap">${escHtml(e.reqBody)}</div>` : ''}
       <div class="dhead">Response Headers</div>
       <div class="dkv"><span class="dk">Status</span><span class="dv">${e.status ?? '—'} ${e.statusText ?? ''}</span></div>
-      ${e.remoteIP ? `<div class="dkv"><span class="dk">Remote IP</span><span class="dv">${e.remoteIP}</span></div>` : ''}
-      ${e.protocol ? `<div class="dkv"><span class="dk">Protocol</span><span class="dv">${e.protocol}</span></div>` : ''}
+      ${e.remoteIP ? `<div class="dkv"><span class="dk">Remote IP</span><span class="dv">${escHtml(e.remoteIP)}</span></div>` : ''}
+      ${e.protocol ? `<div class="dkv"><span class="dk">Protocol</span><span class="dv">${escHtml(e.protocol)}</span></div>` : ''}
       ${Object.entries(resH).map(([k,v]) => `<div class="dkv"><span class="dk">${escHtml(k)}</span><span class="dv">${escHtml(v)}</span></div>`).join('')}
     `
   } else if (detailTab === 'body') {
@@ -295,10 +306,9 @@ function renderDetail() {
     if (active !== null && e.id) {
       panel.getResponseBody(active, e.id).then(result => {
         if (!result) { body.innerHTML = `<div style="color:var(--text3)">Body not available (may have been evicted from buffer)</div>`; return }
-        const content = result.base64Encoded
-          ? atob(result.body).slice(0, 50000)
-          : result.body.slice(0, 50000)
-        const trimmed = result.body.length > 50000 ? '\n\n… (truncated at 50KB)' : ''
+        const decoded = result.base64Encoded ? atob(result.body) : result.body
+        const content = decoded.slice(0, 50000)
+        const trimmed = decoded.length > 50000 ? '\n\n… (truncated at 50KB)' : ''
         body.innerHTML = `<pre style="white-space:pre-wrap;word-break:break-all;font-size:10px;color:var(--text)">${escHtml(content)}${trimmed}</pre>`
       })
     }
@@ -673,11 +683,14 @@ function reconKV(k: string, v: string, cls = ''): string {
   return `<div class="recon-kv"><span class="recon-k">${escHtml(k)}</span><span class="recon-v ${cls}">${escHtml(v)}</span></div>`
 }
 
+let reconBusy = false
 async function runRecon() {
+  if (reconBusy) return            // ignore Enter-then-click / held-Enter double fires
   const inp = $('recon-target') as HTMLInputElement
   const target = inp.value.trim()
   const out = $('recon-output')
   if (!target) { out.textContent = 'Enter a target first.'; return }
+  reconBusy = true
   out.textContent = `Running ${reconTool.toUpperCase()} on ${target}…`
   try {
     if (reconTool === 'dns') {
@@ -757,6 +770,8 @@ async function runRecon() {
     }
   } catch (e: any) {
     out.innerHTML = `<span class="recon-red">${escHtml('Error: ' + (e?.message || String(e)))}</span>`
+  } finally {
+    reconBusy = false
   }
 }
 

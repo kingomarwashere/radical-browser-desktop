@@ -33,7 +33,10 @@ exports.default = async function notarizing(context) {
     return
   }
   // Don't attempt notarization of an unsigned app — it can only fail.
-  if (!env.CSC_LINK && !env.CSC_IDENTITY_AUTO_DISCOVERY && !hasSigningIdentity()) {
+  // Treat CSC_IDENTITY_AUTO_DISCOVERY="false" (the value used to DISABLE signing)
+  // as "no signing", not as a sign that a cert is present.
+  const autoDiscovery = env.CSC_IDENTITY_AUTO_DISCOVERY && env.CSC_IDENTITY_AUTO_DISCOVERY !== 'false'
+  if (!env.CSC_LINK && !autoDiscovery && !hasSigningIdentity()) {
     console.log('  • notarize        skipped — app is not code-signed (no Developer ID identity)')
     return
   }

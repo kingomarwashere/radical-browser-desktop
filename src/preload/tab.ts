@@ -1,6 +1,21 @@
 import { ipcRenderer } from 'electron'
 import './youtube'   // YouTube ad handling: gated poll, works via shared DOM
 
+// ── "/" → jump to the URL bar (quick search) ──────────────────────────────────
+// Vim/Spotlight-style: pressing "/" while viewing a page focuses the address bar
+// so you can immediately type a URL or search. Skipped when you're typing in a
+// text field (so "/" still types normally in inputs, textareas, contentEditable,
+// and on pages that are mid-composition via an IME). Capture phase + stop so it
+// wins over a site's own "/" handler (e.g. GitHub/YouTube search focus).
+window.addEventListener('keydown', (e: KeyboardEvent) => {
+  if (e.key !== '/' || e.metaKey || e.ctrlKey || e.altKey || e.isComposing) return
+  const el = document.activeElement as HTMLElement | null
+  if (el && (el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName))) return
+  e.preventDefault()
+  e.stopImmediatePropagation()
+  ipcRenderer.send('chrome:focus-url')
+}, true)
+
 // Electron doesn't implement window.prompt() — it returns null and warns, so
 // pages that gate on `prompt()` (e.g. a password check) break silently. Provide
 // a working prompt backed by a native dialog in the main process. Synchronous,

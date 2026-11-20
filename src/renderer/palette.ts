@@ -27,6 +27,21 @@ function esc(s: string) {
   return s.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]!))
 }
 
+const SEARCH_URL  = 'https://search.theradicalparty.com'
+const SEARCH_HOST = 'search.theradicalparty.com'
+// Mirror the address bar's heuristic: a scheme, localhost/IP, or host.tld with no
+// spaces is a URL; anything else is a search query.
+function looksLikeUrl(s: string): boolean {
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(s) || s.startsWith('about:')) return true
+  if (s.includes(' ')) return false
+  return /^localhost(:\d+)?(\/.*)?$/i.test(s)
+    || /^\d{1,3}(\.\d{1,3}){3}(:\d+)?(\/.*)?$/.test(s)
+    || /^[a-z0-9-]+(\.[a-z0-9-]+)*\.[a-z]{2,}(:\d+)?(\/.*)?$/i.test(s)
+}
+function toUrl(s: string): string {
+  return (/^[a-z][a-z0-9+.-]*:\/\//i.test(s) || s.startsWith('about:')) ? s : `https://${s}`
+}
+
 const COMMANDS: PItem[] = [
   { label: 'New Tab',                  key: '⌘T', onSelect: () => browser.palette.command('new-tab') },
   { label: 'Close Tab',               key: '⌘W', onSelect: () => browser.palette.command('close-tab') },
@@ -62,9 +77,25 @@ function getSections(q: string) {
     onSelect: () => browser.palette.command('navigate:' + b.url),
   }))
 
-  if (tabItems.length)  sections.push({ section: 'Open Tabs', items: tabItems })
-  if (bmItems.length)   sections.push({ section: 'Bookmarks', items: bmItems })
-  if (cmdItems.length)  sections.push({ section: 'Commands', items: cmdItems })
+  // Spotlight-style fallback: anything you type can be opened as a URL or sent to
+  // web search. Listed last so a matching tab/bookmark still wins by default, but
+  // when nothing matches this is the top (and Enter-able) result.
+  const query = q.trim()
+  const searchItems: PItem[] = []
+  if (query) {
+    if (looksLikeUrl(query)) {
+      searchItems.push({ label: `Open ${query}`, sub: query, onSelect: () => browser.palette.command('navigate:' + toUrl(query)) })
+    }
+    searchItems.push({
+      label: `Search the web for “${query}”`, sub: SEARCH_HOST,
+      onSelect: () => browser.palette.command('navigate:' + SEARCH_URL + '/?q=' + encodeURIComponent(query)),
+    })
+  }
+
+  if (tabItems.length)    sections.push({ section: 'Open Tabs', items: tabItems })
+  if (bmItems.length)     sections.push({ section: 'Bookmarks', items: bmItems })
+  if (cmdItems.length)    sections.push({ section: 'Commands', items: cmdItems })
+  if (searchItems.length) sections.push({ section: 'Search', items: searchItems })
   return sections
 }
 

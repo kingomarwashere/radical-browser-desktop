@@ -1174,6 +1174,14 @@ end run`
       event.returnValue = null   // user cancelled (or dialog error)
     }
   })
+  // "/" pressed in a tab → pull focus back to the chrome and into the URL bar.
+  ipcMain.on('chrome:focus-url', () => {
+    if (win.isDestroyed()) return
+    win.focus()
+    win.webContents.focus()
+    win.webContents.send('focus-url', null)
+  })
+
   // Click inside the dropdown → tell the chrome to navigate there.
   ipcMain.on('omni:pick', (_, url: string) => {
     hideOmnibox()
